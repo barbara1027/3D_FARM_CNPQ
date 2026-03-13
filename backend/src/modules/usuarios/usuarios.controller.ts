@@ -63,7 +63,7 @@ export class UsuarioController{
                 return res.status(400).json({ message: "ID inválido."});
             }
 
-            const {nome, email, senha, tipo} = req.bory;
+            const {nome, email, senha, tipo} = req.body;
 
             const usario = await this.UsuarioService.atualizar(id, {
                 nome,
