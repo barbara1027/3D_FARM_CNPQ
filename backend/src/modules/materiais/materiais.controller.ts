@@ -92,8 +92,7 @@ export class MaterialController{
             const result = await this.materialService.remover(id);
             return res.status(200).json(result);
         } catch (error: any) {
-            const statusCode =
-                error.message === "Material não encontrado." ? 404 : 400;
+            const statusCode = error.message === "Material não encontrado." ? 404 : 400;
 
             return res.status(statusCode).json({ message: error.message });
         }
