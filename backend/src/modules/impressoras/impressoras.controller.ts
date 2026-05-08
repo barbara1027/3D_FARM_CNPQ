@@ -1,8 +1,18 @@
 import { Request, Response } from "express";
 import { ImpressoraService } from "./impressoras.service";
 
-function parseId(value: string): number {
-  return Number(value);
+function parseId(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseOptionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export class ImpressoraController {
@@ -21,7 +31,7 @@ export class ImpressoraController {
     try {
       const id = parseId(req.params.id);
 
-      if (Number.isNaN(id)) {
+      if (id === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 
@@ -49,9 +59,12 @@ export class ImpressoraController {
         api_key,
         timeoutMs,
         idMaterial,
-        id_impressora,
+        eficiencia,
+        taxaErroRecente,
+        tempoParaFicarLivreHoras,
+        capacidadeDiaHoras,
       } = req.body;
-      const materialIdNormalizado = idMaterial ?? id_impressora ?? null;
+      const materialIdNormalizado = parseOptionalNumber(idMaterial ?? req.body.id_material) ?? null;
 
       if (!nome || !modelo || !api) {
         return res.status(400).json({
@@ -67,8 +80,12 @@ export class ImpressoraController {
         baseUrl: baseUrl ?? null,
         api,
         api_key: api_key ?? null,
-        timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+        timeoutMs: parseOptionalNumber(timeoutMs),
         idMaterial: materialIdNormalizado,
+        eficiencia: parseOptionalNumber(eficiencia),
+        taxaErroRecente: parseOptionalNumber(taxaErroRecente),
+        tempoParaFicarLivreHoras: parseOptionalNumber(tempoParaFicarLivreHoras),
+        capacidadeDiaHoras: parseOptionalNumber(capacidadeDiaHoras),
       });
 
       return res.status(201).json(impressora);
@@ -81,7 +98,7 @@ export class ImpressoraController {
     try {
       const id = parseId(req.params.id);
 
-      if (Number.isNaN(id)) {
+      if (id === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 
@@ -95,9 +112,12 @@ export class ImpressoraController {
         api_key,
         timeoutMs,
         idMaterial,
-        id_impressora,
+        eficiencia,
+        taxaErroRecente,
+        tempoParaFicarLivreHoras,
+        capacidadeDiaHoras,
       } = req.body;
-      const materialIdNormalizado = idMaterial ?? id_impressora;
+      const materialIdNormalizado = parseOptionalNumber(idMaterial ?? req.body.id_material);
 
       const impressora = await this.impressoraService.atualizar(id, {
         nome,
@@ -107,8 +127,12 @@ export class ImpressoraController {
         baseUrl,
         api,
         api_key,
-        timeoutMs: timeoutMs !== undefined ? Number(timeoutMs) : undefined,
+        timeoutMs: parseOptionalNumber(timeoutMs),
         idMaterial: materialIdNormalizado,
+        eficiencia: parseOptionalNumber(eficiencia),
+        taxaErroRecente: parseOptionalNumber(taxaErroRecente),
+        tempoParaFicarLivreHoras: parseOptionalNumber(tempoParaFicarLivreHoras),
+        capacidadeDiaHoras: parseOptionalNumber(capacidadeDiaHoras),
       });
 
       return res.status(200).json(impressora);
@@ -122,7 +146,7 @@ export class ImpressoraController {
     try {
       const id = parseId(req.params.id);
 
-      if (Number.isNaN(id)) {
+      if (id === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 
@@ -137,7 +161,7 @@ export class ImpressoraController {
   testarConexao = async (req: Request, res: Response) => {
     try {
       const id = parseId(req.params.id);
-      if (Number.isNaN(id)) {
+      if (id === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 
@@ -152,7 +176,7 @@ export class ImpressoraController {
   sincronizarStatus = async (req: Request, res: Response) => {
     try {
       const id = parseId(req.params.id);
-      if (Number.isNaN(id)) {
+      if (id === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 
@@ -169,7 +193,7 @@ export class ImpressoraController {
       const idImpressora = parseId(req.params.id);
       const idPedido = Number(req.body.idPedido ?? req.body.id_pedido);
 
-      if (Number.isNaN(idImpressora) || Number.isNaN(idPedido)) {
+      if (idImpressora === undefined || Number.isNaN(idPedido)) {
         return res.status(400).json({ message: "IDs inválidos." });
       }
 
@@ -185,7 +209,7 @@ export class ImpressoraController {
   liberar = async (req: Request, res: Response) => {
     try {
       const idImpressora = parseId(req.params.id);
-      if (Number.isNaN(idImpressora)) {
+      if (idImpressora === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 
@@ -202,7 +226,7 @@ export class ImpressoraController {
       const idImpressora = parseId(req.params.id);
       const limit = req.query.limit ? Number(req.query.limit) : 20;
 
-      if (Number.isNaN(idImpressora)) {
+      if (idImpressora === undefined) {
         return res.status(400).json({ message: "ID inválido." });
       }
 

@@ -20,6 +20,10 @@ export interface CreateImpressoraServiceDTO {
   api_key?: string | null;
   timeoutMs?: number;
   idMaterial?: number | null;
+  eficiencia?: number;
+  taxaErroRecente?: number;
+  tempoParaFicarLivreHoras?: number;
+  capacidadeDiaHoras?: number;
 }
 
 export interface UpdateImpressoraServiceDTO {
@@ -32,6 +36,10 @@ export interface UpdateImpressoraServiceDTO {
   api_key?: string | null;
   timeoutMs?: number;
   idMaterial?: number | null;
+  eficiencia?: number;
+  taxaErroRecente?: number;
+  tempoParaFicarLivreHoras?: number;
+  capacidadeDiaHoras?: number;
 }
 
 export class ImpressoraService {
