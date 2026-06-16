@@ -1,8 +1,9 @@
 import { Request, Response } from "express";
 import { ImpressoraService } from "./impressoras.service";
 
-function parseId(value: string): number | undefined {
-  const parsed = Number(value);
+function parseId(value: string | string[]): number | undefined {
+  const str = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(str);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
@@ -339,7 +340,7 @@ export class ImpressoraController {
   confirmarRemocao = async (req: Request, res: Response) => {
     try {
       const id = parseId(req.params.id);
-      if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+      if (id === undefined) return res.status(400).json({ message: "ID inválido." });
       return res.status(200).json(await this.impressoraService.confirmarRemocao(id));
     } catch (error: any) {
       const statusCode = error.message === "Impressora não encontrada." ? 404 : 500;
@@ -385,7 +386,7 @@ export class ImpressoraController {
   progresso = async (req: Request, res: Response) => {
     try {
       const id = parseId(req.params.id);
-      if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+      if (id === undefined) return res.status(400).json({ message: "ID inválido." });
       return res.status(200).json(await this.impressoraService.obterProgresso(id));
     } catch (error: any) {
       const statusCode = error.message === "Impressora não encontrada." ? 404 : 500;
