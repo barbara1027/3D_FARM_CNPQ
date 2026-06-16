@@ -80,7 +80,6 @@ export function HomePage() {
 
   return (
     <Box>
-      {/* ── Hero ── */}
       <Box
         sx={{
           background: 'linear-gradient(135deg, #1565c0 0%, #0d47a1 40%, #01579b 100%)',
@@ -129,7 +128,6 @@ export function HomePage() {
         </Container>
       </Box>
 
-      {/* ── Como funciona ── */}
       <Container maxWidth="md" sx={{ py: 8 }}>
         <Typography variant="h4" fontWeight={700} textAlign="center" gutterBottom>
           Como funciona
@@ -208,7 +206,6 @@ export function HomePage() {
 
       <Divider />
 
-      {/* ── Galeria de impressões ── */}
       <Box sx={{ bgcolor: 'grey.50', py: 8 }}>
         <Container maxWidth="lg">
           <Box display="flex" alignItems="center" justifyContent="center" gap={1} mb={1}>
@@ -243,7 +240,6 @@ export function HomePage() {
 
       <Divider />
 
-      {/* ── Sites de STLs gratuitos ── */}
       <Container maxWidth="lg" sx={{ py: 8 }}>
         <Typography variant="h4" fontWeight={700} textAlign="center" gutterBottom>
           Onde encontrar modelos gratuitos
@@ -290,7 +286,6 @@ export function HomePage() {
 
       <Divider />
 
-      {/* ── Modelos populares ── */}
       <Box sx={{ bgcolor: 'grey.50', py: 8 }}>
         <Container maxWidth="lg">
           <Typography variant="h4" fontWeight={700} textAlign="center" gutterBottom>
@@ -335,7 +330,6 @@ export function HomePage() {
         </Container>
       </Box>
 
-      {/* ── CTA final ── */}
       <Box
         sx={{
           background: 'linear-gradient(135deg, #1565c0 0%, #0d47a1 100%)',

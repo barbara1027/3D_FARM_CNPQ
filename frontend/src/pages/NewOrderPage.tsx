@@ -45,9 +45,7 @@ const QUALITY_INFO: Record<string, { title: string; description: string; detail:
   },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Step 1 — Upload
-// ─────────────────────────────────────────────────────────────────────────────
 function UploadStep({ files, onFiles }: { files: File[]; onFiles: (f: File[]) => void }) {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { 'model/stl': ['.stl'], 'application/octet-stream': ['.stl'] },
@@ -96,9 +94,7 @@ function UploadStep({ files, onFiles }: { files: File[]; onFiles: (f: File[]) =>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Step 2 — Configuração (simplificada)
-// ─────────────────────────────────────────────────────────────────────────────
 interface OrderData {
   projectName: string;
   idMaterial: number | '';
@@ -367,9 +363,7 @@ function ConfigStep({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Step 3 — Confirmação
-// ─────────────────────────────────────────────────────────────────────────────
 function ConfirmationStep({ files, data, mat }: { files: File[]; data: OrderData; mat: Material | null }) {
   const info = QUALITY_INFO[data.qualityPreset];
   return (
@@ -404,9 +398,7 @@ function ConfirmationStep({ files, data, mat }: { files: File[]; data: OrderData
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Página principal
-// ─────────────────────────────────────────────────────────────────────────────
 export function NewOrderPage() {
   const navigate = useNavigate();
   const [step, setStep]     = useState(0);

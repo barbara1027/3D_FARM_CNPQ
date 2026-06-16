@@ -39,7 +39,6 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
   const factors: ComplexityFactor[] = [];
   let score = 0;
 
-  // ── 1. Suporte excessivo (peso máx: 0.25) ────────────────────────────────
   if (m.supportRatio > 0) {
     // Linear: 0% suporte → 0, 30%+ suporte → 0.25
     const contrib = Math.min(m.supportRatio / 0.30, 1.0) * 0.25;
@@ -55,7 +54,6 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     }
   }
 
-  // ── 2. Ilhas de perímetro (peso máx: 0.20) ──────────────────────────────
   // Referência: 20 ilhas = mínimo, 200 ilhas = máximo
   if (m.islandCount > 20) {
     const contrib = Math.min((m.islandCount - 20) / 180, 1.0) * 0.20;
@@ -69,7 +67,6 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     });
   }
 
-  // ── 3. Retrações (peso máx: 0.15) ────────────────────────────────────────
   // Referência: 200 = normal, 1000 = crítico
   if (m.retractionCount > 200) {
     const contrib = Math.min((m.retractionCount - 200) / 800, 1.0) * 0.15;
@@ -83,7 +80,6 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     });
   }
 
-  // ── 4. Segmentos curtos (peso máx: 0.15) ─────────────────────────────────
   // Referência: 500 = normal, 3000 = crítico
   if (m.shortSegmentCount > 500) {
     const contrib = Math.min((m.shortSegmentCount - 500) / 2500, 1.0) * 0.15;
@@ -97,7 +93,6 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     });
   }
 
-  // ── 5. Tempo longo (peso máx: 0.15) ─────────────────────────────────────
   // Referência: 2h = normal, 18h = crítico
   if (m.timeSeconds > 2 * 3600) {
     const contrib = Math.min((m.timeSeconds - 2 * 3600) / (16 * 3600), 1.0) * 0.15;
@@ -112,7 +107,6 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     });
   }
 
-  // ── 6. Perímetro externo alto (peso máx: 0.10) ──────────────────────────
   // Referência: 25% = normal, 60% = crítico
   if (m.externalPerimRatio > 0.25) {
     const contrib = Math.min((m.externalPerimRatio - 0.25) / 0.35, 1.0) * 0.10;

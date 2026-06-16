@@ -45,7 +45,6 @@ function table(rows: string): string {
   return `<table style="border-collapse:collapse;width:100%;margin-top:12px">${rows}</table>`;
 }
 
-// ── Pedido aguardando revisão ─────────────────────────────────────────────────
 export async function emailRevisaoPendente(pedido: {
   id: number; nome: string; nomeUsuario?: string; emailUsuario?: string;
   preco: number; scoreComplexidade: number; motivoComplexidade?: string;
@@ -69,7 +68,6 @@ export async function emailRevisaoPendente(pedido: {
   await send(`[3D Farm] Revisão pendente: ${pedido.nome}`, baseTemplate("⚠️ Pedido aguardando revisão", "#ff9800", body));
 }
 
-// ── Pedido falhou ─────────────────────────────────────────────────────────────
 export async function emailPedidoFalhou(pedido: {
   id: number; nome: string; nomeUsuario?: string; emailUsuario?: string;
   motivo?: string;
@@ -90,7 +88,6 @@ export async function emailPedidoFalhou(pedido: {
   await send(`[3D Farm] Falha no pedido #${pedido.id}: ${pedido.nome}`, baseTemplate("❌ Falha no pipeline", "#f44336", body));
 }
 
-// ── Pedido concluído ──────────────────────────────────────────────────────────
 export async function emailPedidoConcluido(pedido: {
   id: number; nome: string; nomeUsuario?: string; emailUsuario?: string;
   preco: number; tempoEstimadoS?: number | null; materialGramas?: number | null;
@@ -111,7 +108,6 @@ export async function emailPedidoConcluido(pedido: {
   await send(`[3D Farm] Pedido concluído: ${pedido.nome}`, baseTemplate("✅ Pedido concluído", "#4caf50", body));
 }
 
-// ── Impressora com erro ───────────────────────────────────────────────────────
 export async function emailImpressoraErro(impressora: {
   id: number; nome: string; modelo: string; ultimoErro?: string | null;
 }): Promise<void> {

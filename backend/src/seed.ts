@@ -16,7 +16,6 @@ import { db } from "./database/connection";
 async function seed() {
   console.log("🌱 Iniciando seed...\n");
 
-  // ── Verificar se existe pelo menos 1 usuário ──────────────────────────────
   const [usuariosExistentes]: any = await db.execute(
     "SELECT id, tipo FROM usuarios ORDER BY id LIMIT 10"
   );
@@ -59,7 +58,6 @@ Depois rode npm run seed novamente.
 
   console.log(`✓ Usuários encontrados — admin: id=${idAdmin}, clientes: ${clientes.map((c: any) => c.id).join(", ") || "usando admin"}`);
 
-  // ── Limpar tabelas de dados (mantém usuários) ─────────────────────────────
   await db.execute("SET FOREIGN_KEY_CHECKS = 0");
   await db.execute("TRUNCATE TABLE impressora_eventos");
   await db.execute("TRUNCATE TABLE impressoras");
@@ -70,7 +68,6 @@ Depois rode npm run seed novamente.
   await db.execute("SET FOREIGN_KEY_CHECKS = 1");
   console.log("✓ Tabelas de dados limpas (usuários mantidos)");
 
-  // ── Materiais ─────────────────────────────────────────────────────────────
   await db.execute(`
     INSERT INTO materiais (nome, tipo, preco, status, cor) VALUES
     ('PLA Branco',        'PLA',    0.1200, 'disponivel',   'Branco'),
@@ -81,7 +78,6 @@ Depois rode npm run seed novamente.
   `);
   console.log("✓ Materiais criados (4 disponíveis, 1 indisponível)");
 
-  // ── Qualidades ────────────────────────────────────────────────────────────
   await db.execute(`
     INSERT INTO qualidades (nome, altura, espessura, preenchimento, velocidade, temperatura_bico, temperatura_mesa, suporte, adesao) VALUES
     ('Normal',         0.200, 1.2, 20, 60, 210, 60, 0, 0),
@@ -90,7 +86,6 @@ Depois rode npm run seed novamente.
   `);
   console.log("✓ Qualidades criadas (Normal, Qualidade, Alta Qualidade)");
 
-  // ── Arquivos (paths fictícios — o sistema não precisa dos arquivos físicos para exibir) ──
   await db.execute(`
     INSERT INTO arquivos (nome, tipo, caminho, tamanho_mb) VALUES
     ('suporte_camera.stl',     'stl',   'uploads/fake_suporte_camera.stl',    2.40),
@@ -102,7 +97,6 @@ Depois rode npm run seed novamente.
   `);
   console.log("✓ Arquivos criados");
 
-  // ── Pedidos (todos os status possíveis) ───────────────────────────────────
   await db.execute(`
     INSERT INTO pedidos (nome, preco, descricao, status, id_usuario, id_material, id_qualidade, id_arquivo, created_at) VALUES
 
@@ -164,7 +158,6 @@ Depois rode npm run seed novamente.
   ]);
   console.log("✓ Pedidos criados (2 na_fila · 1 em_impressao · 3 concluido · 2 falhou · 2 cancelado)");
 
-  // ── Impressoras ───────────────────────────────────────────────────────────
   await db.execute(`
     INSERT INTO impressoras (nome, modelo, status, ip, base_url, api, timeout_ms, status_fisico, id_material) VALUES
     ('Ender 3 Pro',     'Creality Ender 3 Pro', 'Imprimindo', '192.168.1.101',
@@ -176,7 +169,6 @@ Depois rode npm run seed novamente.
   `);
   console.log("✓ Impressoras criadas (1 Imprimindo · 1 Ociosa · 1 Manutenção)");
 
-  // ── Eventos das impressoras ───────────────────────────────────────────────
   await db.execute(`
     INSERT INTO impressora_eventos (id_impressora, tipo, mensagem) VALUES
     (1, 'job_started',  'Pedido 3 enviado para a impressora.'),

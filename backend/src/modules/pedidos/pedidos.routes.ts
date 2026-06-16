@@ -111,7 +111,6 @@ pedidosRoutes.post("/:id/aprovar", authMiddleware, adminMiddleware,
   }
 );
 
-// ── Chat por pedido ────────────────────────────────────────────────────────────
 
 /**
  * GET /pedidos/mensagens/conversas

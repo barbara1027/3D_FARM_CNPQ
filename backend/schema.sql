@@ -71,14 +71,12 @@ CREATE TABLE IF NOT EXISTS pedidos (
   nome                VARCHAR(200)  NOT NULL,
   preco               DECIMAL(10,2) NOT NULL DEFAULT 0,
   descricao           TEXT NULL,
-  -- Novos status para o fluxo de análise e pagamento [cite: 153]
   status              ENUM('analisando', 'aguardando_pagamento', 'aguardando_revisao', 'na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado') NOT NULL DEFAULT 'analisando',
   id_usuario          INT UNSIGNED NOT NULL,
   id_material         INT UNSIGNED NOT NULL,
   id_qualidade        INT UNSIGNED NOT NULL,
   id_arquivo          INT UNSIGNED NOT NULL,
   
-  -- Campos de análise do Slicer e Precificação detalhada
   parametros          JSON NULL,
   quantidade          INT UNSIGNED NOT NULL DEFAULT 1,
   gcode_path          VARCHAR(512) NULL,
@@ -90,7 +88,6 @@ CREATE TABLE IF NOT EXISTS pedidos (
   taxa_complexidade   DECIMAL(10,2) NULL,
   taxa_stripe         DECIMAL(10,2) NULL,
 
-  -- Campos de fila e ETA
   tempo_gcode_horas         DECIMAL(7,2) NULL,
   prazo_entrega_horas       DECIMAL(7,2) NULL,
   prazo_entrega             DATETIME NULL,

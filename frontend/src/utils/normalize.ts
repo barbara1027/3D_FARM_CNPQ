@@ -1,4 +1,3 @@
-// MySQL retorna DECIMAL/FLOAT como string — este utilitário corrige isso
 
 export function normalizePedido(p: any) {
   if (!p) return null;

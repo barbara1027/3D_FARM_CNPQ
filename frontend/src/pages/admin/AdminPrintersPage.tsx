@@ -179,7 +179,6 @@ export function AdminPrintersPage() {
     } finally { setAtribuindo(false); }
   };
 
-  // ── DataGrid columns (para o dialog Gerenciar) ───────────────────────────
   const cols: GridColDef<Impressora>[] = [
     { field: 'nome',   headerName: 'Nome',      flex: 1, minWidth: 130 },
     { field: 'modelo', headerName: 'Modelo',    width: 150 },

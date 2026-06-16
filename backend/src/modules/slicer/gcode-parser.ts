@@ -42,7 +42,6 @@ export async function parseGcode(gcodePath: string): Promise<GcodeMetrics> {
     rl.on("line", (line) => {
       const trimmed = line.trim();
 
-      // ── Métricas do cabeçalho (comentários do PrusaSlicer) ────────────────
       // Tempo estimado: "; estimated printing time (normal mode) = 1h 23m 45s"
       if (!timeFound) {
         const timeMatch = trimmed.match(
@@ -68,7 +67,6 @@ export async function parseGcode(gcodePath: string): Promise<GcodeMetrics> {
       const perimMatch = trimmed.match(/^; external perimeters\s*=\s*([\d.]+)%/i);
       if (perimMatch) externalPerimRatio = parseFloat(perimMatch[1]) / 100;
 
-      // ── Análise linha a linha do G-code ────────────────────────────────────
       // Mudanças de camada
       if (trimmed.startsWith(";LAYER_CHANGE") || /^;Z:\d/.test(trimmed)) {
         layerChanges++;

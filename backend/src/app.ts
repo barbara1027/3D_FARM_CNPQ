@@ -13,10 +13,8 @@ import { stripeWebhook } from "./modules/pedidos/stripe.controller";
 
 const app = express();
 
-// ── Segurança — headers HTTP ──────────────────────────────────────────────────
 app.use(helmet());
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: [
     "http://localhost:5173",
@@ -27,7 +25,6 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 20,
@@ -46,11 +43,9 @@ const cadastroLimiter = rateLimit({
 
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhook);
 
-// ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ── Sessão (necessária para Passport durante o fluxo OAuth) ──────────────────
 app.use(session({
   secret: process.env.SESSION_SECRET ?? "session_secret_dev",
   resave: false,
@@ -62,14 +57,12 @@ app.use(session({
   },
 }));
 
-// ── Passport ──────────────────────────────────────────────────────────────────
 configureGoogleStrategy();
 app.use(passport.initialize());
 app.use(passport.session());
 
 // Arquivos de upload não são servidos como estáticos — acesso via /arquivos/:id com autenticação
 
-// ── Swagger ───────────────────────────────────────────────────────────────────
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customSiteTitle: "3D Farm API Docs",
   swaggerOptions: { persistAuthorization: true },
@@ -79,12 +72,10 @@ app.get("/docs.json", (_req, res) => {
   res.send(swaggerSpec);
 });
 
-// ── Rotas ─────────────────────────────────────────────────────────────────────
 app.use("/auth/login", authLimiter);
 app.use("/usuarios", cadastroLimiter);
 app.use(router);
 
-// ── Health check ──────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });

@@ -21,7 +21,6 @@ const options: swaggerJsdoc.Options = {
         },
       },
       schemas: {
-        // ── Auth ──────────────────────────────────────────────
         LoginDTO: {
           type: "object",
           required: ["email", "senha"],
@@ -31,7 +30,6 @@ const options: swaggerJsdoc.Options = {
           },
         },
 
-        // ── Usuários ──────────────────────────────────────────
         UsuarioPublico: {
           type: "object",
           properties: {
@@ -63,7 +61,6 @@ const options: swaggerJsdoc.Options = {
           },
         },
 
-        // ── Materiais ─────────────────────────────────────────
         Material: {
           type: "object",
           properties: {
@@ -97,7 +94,6 @@ const options: swaggerJsdoc.Options = {
           },
         },
 
-        // ── Qualidades ────────────────────────────────────────
         QualidadeImpressao: {
           type: "object",
           properties: {
@@ -145,7 +141,6 @@ const options: swaggerJsdoc.Options = {
           },
         },
 
-        // ── Arquivos ──────────────────────────────────────────
         Arquivo: {
           type: "object",
           properties: {
@@ -158,7 +153,6 @@ const options: swaggerJsdoc.Options = {
           },
         },
 
-        // ── Pedidos ───────────────────────────────────────────
         Pedido: {
           type: "object",
           properties: {
@@ -209,7 +203,6 @@ const options: swaggerJsdoc.Options = {
           },
         },
 
-        // ── Impressoras ───────────────────────────────────────
         Impressora: {
           type: "object",
           properties: {

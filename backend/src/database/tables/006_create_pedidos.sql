@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS pedidos (
   id_qualidade        INT NOT NULL,
   id_arquivo          INT NOT NULL,
 
-  -- Slicer / pricing
   parametros          JSON NULL,
   quantidade          INT NOT NULL DEFAULT 1,
   gcode_path          VARCHAR(512) NULL,
@@ -30,7 +29,6 @@ CREATE TABLE IF NOT EXISTS pedidos (
   taxa_complexidade   DECIMAL(10,2) NULL,
   taxa_stripe         DECIMAL(10,2) NULL,
 
-  -- Queue / ETA
   tempo_gcode_horas         DECIMAL(7,2) NULL,
   prazo_entrega_horas       DECIMAL(7,2) NULL,
   prazo_entrega             DATETIME NULL,

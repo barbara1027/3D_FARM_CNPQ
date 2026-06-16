@@ -36,7 +36,6 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
   let row: any;
 
   try {
-    // ── 1. Dados do pedido ─────────────────────────────────────────────────
     const [rows]: any = await db.execute(`
       SELECT
         p.id,
@@ -110,7 +109,6 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       tempMesa:         userParams.tempMesa         || tempMesaDefault,
     };
 
-    // ── 2. Fatiamento ──────────────────────────────────────────────────────
     const gcodePath = gcodeOutputPath(pedidoId);
     await runPrusaSlicer(stlAbsolute, gcodePath, sliceParams);
     console.log(`[AUTO-SLICE] G-code gerado: ${gcodePath}`);
@@ -120,7 +118,6 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
     const arquivoRepo = new ArquivoRepository();
     await arquivoRepo.upsertGcode(pedidoId, gcodePath, gcodeStats.size / 1_000_000);
 
-    // ── 3. Análise do G-code ──────────────────────────────────────────────
     const metrics = await parseGcode(gcodePath);
     console.log(
       `[AUTO-SLICE] Métricas: ${metrics.timeSeconds}s, ` +
@@ -129,14 +126,12 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       `retrações=${metrics.retractionCount}, ilhas=${metrics.islandCount}`
     );
 
-    // ── 4. Score de complexidade ───────────────────────────────────────────
     const complexity = scoreComplexity(metrics);
     console.log(
       `[AUTO-SLICE] Score: ${complexity.score.toFixed(3)} ` +
       `(${complexity.isComplex ? "COMPLEXO" : "simples"})`
     );
 
-    // ── 5. Preço ───────────────────────────────────────────────────────────
     const quantidade   = Math.max(1, Number(row.quantidade) || 1);
     const pricePerGram = parseFloat(row.pricePerGram) || 0.12;
     const pricing      = calculatePrice(metrics, pricePerGram, complexity.score);
@@ -154,7 +149,6 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       `(${quantidade}× R$${pricing.total.toFixed(2)}, base R$${totalSubtotal.toFixed(2)} + Stripe R$${totalTaxaStripe.toFixed(2)})`
     );
 
-    // ── 6. Persiste resultado ──────────────────────────────────────────────
     // Peça não complexa (score < 0.5) → aguardando_pagamento
     // Peça complexa  (score >= 0.5) → aguardando_revisao (admin vê e pode ajustar preço)
     const novoStatus = complexity.isComplex
