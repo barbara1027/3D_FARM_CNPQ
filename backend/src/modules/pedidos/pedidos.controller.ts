@@ -1,6 +1,23 @@
 import { Request, Response } from "express";
 import { PedidoService } from "./pedidos.service";
 
+function parseOptionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
 export class PedidoController {
   constructor(private readonly service: PedidoService) {}
 
@@ -62,7 +79,7 @@ export class PedidoController {
    */
   criar = async (req: Request, res: Response) => {
     try {
-      const { nome, descricao, idMaterial, idQualidade, idArquivo, parametros, quantidade } = req.body;
+      const { nome, descricao, idMaterial, idQualidade, idArquivo, parametros, quantidade, prioridadePaga } = req.body;
       const idUsuario = req.jwtUser!.sub;
 
       if (!nome || !idMaterial || !idQualidade || !idArquivo) {
@@ -73,13 +90,14 @@ export class PedidoController {
 
       const pedido = await this.service.criar({
         nome,
-        descricao:   descricao   ?? null,
+        descricao:      descricao   ?? null,
         idUsuario,
-        idMaterial:  Number(idMaterial),
-        idQualidade: Number(idQualidade),
-        idArquivo:   Number(idArquivo),
-        parametros:  parametros  ?? null,
-        quantidade:  quantidade != null ? Math.max(1, Number(quantidade)) : 1,
+        idMaterial:     Number(idMaterial),
+        idQualidade:    Number(idQualidade),
+        idArquivo:      Number(idArquivo),
+        parametros:     parametros  ?? null,
+        quantidade:     quantidade != null ? Math.max(1, Number(quantidade)) : 1,
+        prioridadePaga: parseOptionalBoolean(prioridadePaga),
       });
 
       return res.status(201).json(pedido);
@@ -98,7 +116,17 @@ export class PedidoController {
       if (user.tipo !== "admin" && existing.idUsuario !== user.sub) {
         return res.status(403).json({ message: "Acesso negado." });
       }
-      const p = await this.service.atualizar(id, req.body);
+      const p = await this.service.atualizar(id, {
+        ...req.body,
+        preco:             parseOptionalNumber(req.body.preco),
+        idUsuario:         parseOptionalNumber(req.body.idUsuario),
+        idMaterial:        parseOptionalNumber(req.body.idMaterial),
+        idQualidade:       parseOptionalNumber(req.body.idQualidade),
+        idArquivo:         parseOptionalNumber(req.body.idArquivo),
+        tempoGcodeHoras:   parseOptionalNumber(req.body.tempoGcodeHoras),
+        prazoEntregaHoras: parseOptionalNumber(req.body.prazoEntregaHoras),
+        prioridadePaga:    parseOptionalBoolean(req.body.prioridadePaga),
+      });
       return res.status(200).json(p);
     } catch (e: any) {
       return res.status(e.message === "Pedido não encontrado." ? 404 : 500)

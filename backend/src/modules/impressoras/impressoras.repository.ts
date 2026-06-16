@@ -28,6 +28,19 @@ export interface Impressora {
   ultimaSincronizacao: string | null;
   idMaterial: number | null;
   idPedidoAtual: number | null;
+  eficiencia: number;
+  taxaErroRecente: number;
+  tempoParaFicarLivreHoras: number;
+  capacidadeDiaHoras: number;
+}
+
+export interface ImpressoraOtimizacaoRow {
+  id: number;
+  idMaterialAtual: number | null;
+  eficiencia: number;
+  taxaErroRecente: number;
+  tempoParaFicarLivreHoras: number;
+  capacidadeDiaHoras: number;
 }
 
 export interface CreateImpressoraRepositoryDTO {
@@ -44,6 +57,10 @@ export interface CreateImpressoraRepositoryDTO {
   ultimoErro?: string | null;
   ultimaSincronizacao?: string | null;
   idMaterial?: number | null;
+  eficiencia?: number;
+  taxaErroRecente?: number;
+  tempoParaFicarLivreHoras?: number;
+  capacidadeDiaHoras?: number;
 }
 
 export interface UpdateImpressoraRepositoryDTO {
@@ -61,6 +78,10 @@ export interface UpdateImpressoraRepositoryDTO {
   ultimaSincronizacao?: string | null;
   idMaterial?: number | null;
   idPedidoAtual?: number | null;
+  eficiencia?: number;
+  taxaErroRecente?: number;
+  tempoParaFicarLivreHoras?: number;
+  capacidadeDiaHoras?: number;
 }
 
 export interface ImpressoraEvento {
@@ -70,6 +91,38 @@ export interface ImpressoraEvento {
   mensagem: string;
   payloadJson: string | null;
   createdAt: string;
+}
+
+function toNumber(value: unknown): number {
+  return Number(value);
+}
+
+function mapNullableNumber(value: unknown): number | null {
+  return value === null || value === undefined ? null : toNumber(value);
+}
+
+function mapImpressora(row: any): Impressora {
+  return {
+    ...row,
+    id: toNumber(row.id),
+    timeoutMs: toNumber(row.timeoutMs),
+    idMaterial: mapNullableNumber(row.idMaterial),
+    eficiencia: toNumber(row.eficiencia),
+    taxaErroRecente: toNumber(row.taxaErroRecente),
+    tempoParaFicarLivreHoras: toNumber(row.tempoParaFicarLivreHoras),
+    capacidadeDiaHoras: toNumber(row.capacidadeDiaHoras),
+  } as Impressora;
+}
+
+function mapImpressoraOtimizacao(row: any): ImpressoraOtimizacaoRow {
+  return {
+    id: toNumber(row.id),
+    idMaterialAtual: mapNullableNumber(row.idMaterialAtual),
+    eficiencia: toNumber(row.eficiencia),
+    taxaErroRecente: toNumber(row.taxaErroRecente),
+    tempoParaFicarLivreHoras: toNumber(row.tempoParaFicarLivreHoras),
+    capacidadeDiaHoras: toNumber(row.capacidadeDiaHoras),
+  };
 }
 
 function mapPrinterColumns() {
@@ -88,8 +141,12 @@ function mapPrinterColumns() {
       job_remoto_id AS jobRemotoId,
       ultimo_erro AS ultimoErro,
       DATE_FORMAT(ultima_sincronizacao, '%Y-%m-%d %H:%i:%s') AS ultimaSincronizacao,
-      id_material    AS idMaterial,
-      id_pedido_atual AS idPedidoAtual
+      id_material AS idMaterial,
+      id_pedido_atual AS idPedidoAtual,
+      eficiencia,
+      taxa_erro_recente AS taxaErroRecente,
+      tempo_para_ficar_livre_horas AS tempoParaFicarLivreHoras,
+      capacidade_dia_horas AS capacidadeDiaHoras
     FROM impressoras
   `;
 }
@@ -97,12 +154,12 @@ function mapPrinterColumns() {
 export class ImpressoraRepository {
   async findAll(): Promise<Impressora[]> {
     const [rows] = await db.execute(`${mapPrinterColumns()} ORDER BY id DESC`);
-    return rows as Impressora[];
+    return (rows as any[]).map(mapImpressora);
   }
 
   async findById(id: number): Promise<Impressora | null> {
     const [rows] = await db.execute(`${mapPrinterColumns()} WHERE id = ? LIMIT 1`, [id]);
-    const impressoras = rows as Impressora[];
+    const impressoras = (rows as any[]).map(mapImpressora);
     return impressoras[0] ?? null;
   }
 
@@ -111,14 +168,17 @@ export class ImpressoraRepository {
       INSERT INTO impressoras (
         nome, modelo, status, ip, base_url, api, api_key,
         timeout_ms, status_fisico, job_remoto_id, ultimo_erro,
-        ultima_sincronizacao, id_material
+        ultima_sincronizacao, id_material,
+        eficiencia, taxa_erro_recente, tempo_para_ficar_livre_horas, capacidade_dia_horas
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       data.nome, data.modelo, data.status,
       data.ip ?? null, data.baseUrl ?? null, data.api, data.api_key ?? null,
       data.timeoutMs ?? 15000, data.statusFisico ?? null, data.jobRemotoId ?? null,
       data.ultimoErro ?? null, data.ultimaSincronizacao ?? null, data.idMaterial ?? null,
+      data.eficiencia ?? 1, data.taxaErroRecente ?? 0,
+      data.tempoParaFicarLivreHoras ?? 0, data.capacidadeDiaHoras ?? 8,
     ]);
     return result.insertId;
   }
@@ -139,8 +199,12 @@ export class ImpressoraRepository {
     if (data.jobRemotoId !== undefined) { campos.push("job_remoto_id = ?"); valores.push(data.jobRemotoId); }
     if (data.ultimoErro !== undefined) { campos.push("ultimo_erro = ?"); valores.push(data.ultimoErro); }
     if (data.ultimaSincronizacao !== undefined) { campos.push("ultima_sincronizacao = ?"); valores.push(data.ultimaSincronizacao); }
-    if (data.idMaterial     !== undefined) { campos.push("id_material = ?");     valores.push(data.idMaterial); }
-    if (data.idPedidoAtual  !== undefined) { campos.push("id_pedido_atual = ?"); valores.push(data.idPedidoAtual); }
+    if (data.idMaterial !== undefined) { campos.push("id_material = ?"); valores.push(data.idMaterial); }
+    if (data.idPedidoAtual !== undefined) { campos.push("id_pedido_atual = ?"); valores.push(data.idPedidoAtual); }
+    if (data.eficiencia !== undefined) { campos.push("eficiencia = ?"); valores.push(data.eficiencia); }
+    if (data.taxaErroRecente !== undefined) { campos.push("taxa_erro_recente = ?"); valores.push(data.taxaErroRecente); }
+    if (data.tempoParaFicarLivreHoras !== undefined) { campos.push("tempo_para_ficar_livre_horas = ?"); valores.push(data.tempoParaFicarLivreHoras); }
+    if (data.capacidadeDiaHoras !== undefined) { campos.push("capacidade_dia_horas = ?"); valores.push(data.capacidadeDiaHoras); }
 
     if (campos.length === 0) return;
     valores.push(id);
@@ -149,6 +213,25 @@ export class ImpressoraRepository {
 
   async delete(id: number): Promise<void> {
     await db.execute(`DELETE FROM impressoras WHERE id = ?`, [id]);
+  }
+
+  async findParaOtimizacao(): Promise<ImpressoraOtimizacaoRow[]> {
+    const [rows] = await db.execute(
+      `
+      SELECT
+        id,
+        id_material AS idMaterialAtual,
+        eficiencia,
+        taxa_erro_recente AS taxaErroRecente,
+        tempo_para_ficar_livre_horas AS tempoParaFicarLivreHoras,
+        capacidade_dia_horas AS capacidadeDiaHoras
+      FROM impressoras
+      WHERE status IN ('Ociosa', 'Imprimindo')
+      ORDER BY id ASC
+      `,
+    );
+
+    return (rows as any[]).map(mapImpressoraOtimizacao);
   }
 
   async reserveIfIdle(id: number): Promise<boolean> {

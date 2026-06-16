@@ -10,6 +10,7 @@ export interface CreatePedidoServiceDTO {
   idArquivo: number;
   parametros?: Record<string, any> | null;
   quantidade?: number;
+  prioridadePaga?: boolean;
 }
 
 export interface UpdatePedidoServiceDTO {
@@ -19,6 +20,11 @@ export interface UpdatePedidoServiceDTO {
   idMaterial?: number;
   idQualidade?: number;
   idArquivo?: number;
+  tempoGcodeHoras?: number;
+  prazoEntregaHoras?: number;
+  prazoEntrega?: string | Date | null;
+  limiteInicioImpressao?: string | Date | null;
+  prioridadePaga?: boolean;
 }
 
 export class PedidoService {

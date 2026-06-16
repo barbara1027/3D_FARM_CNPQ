@@ -6,6 +6,7 @@ import { qualidadeImpressaoRoutes } from "../modules/qualidadeImpressao/qualidad
 import { arquivosRoutes } from "../modules/arquivos/arquivos.routes";
 import { pedidosRoutes } from "../modules/pedidos/pedidos.routes";
 import { impressorasRoutes } from "../modules/impressoras/impressoras.routes";
+import { filaRoutes } from "../modules/fila/fila.routes";
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use("/qualidades", qualidadeImpressaoRoutes);
 router.use("/arquivos", arquivosRoutes);
 router.use("/pedidos", pedidosRoutes);
 router.use("/impressoras", impressorasRoutes);
+router.use("/fila", filaRoutes);
 
 export { router };
