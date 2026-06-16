@@ -1,64 +1,80 @@
 import { Pedido, PedidoRepository, StatusPedido } from "./pedidos.repository";
+import { runAutoSlicePipeline } from "../slicer/auto-slice.service";
 
 export interface CreatePedidoServiceDTO {
   nome: string;
-  preco: number;
-  descricao?: string;
+  descricao?: string | null;
   idUsuario: number;
   idMaterial: number;
   idQualidade: number;
   idArquivo: number;
+  parametros?: Record<string, any> | null;
+  quantidade?: number;
 }
 
 export interface UpdatePedidoServiceDTO {
   preco?: number;
   descricao?: string | null;
-  idUsuario?: number;
+  status?: StatusPedido;
   idMaterial?: number;
   idQualidade?: number;
   idArquivo?: number;
-  status?: StatusPedido;
 }
 
 export class PedidoService {
-  constructor(private readonly pedidoRepository: PedidoRepository) {}
+  constructor(private readonly repo: PedidoRepository) {}
 
   async listar(): Promise<Pedido[]> {
-    return this.pedidoRepository.findAll();
+    return this.repo.findAll();
+  }
+
+  async listarPorUsuario(idUsuario: number): Promise<Pedido[]> {
+    return this.repo.findByUsuario(idUsuario);
   }
 
   async buscarPorId(id: number): Promise<Pedido | null> {
-    return this.pedidoRepository.findById(id);
+    return this.repo.findById(id);
   }
 
-  async criar(data: CreatePedidoServiceDTO): Promise<Pedido | null> {
-    const id = await this.pedidoRepository.create({
+  /**
+   * Cria o pedido com status "analisando" e dispara o pipeline de fatiamento
+   * em background (setImmediate → não bloqueia a resposta HTTP).
+   */
+  async criar(data: CreatePedidoServiceDTO): Promise<Pedido> {
+    const id = await this.repo.create({
       ...data,
-      status: "na_fila",
+      preco:  0,            // será atualizado pelo pipeline
+      status: "analisando", // começa analisando
     });
 
-    return this.pedidoRepository.findById(id);
+    const pedido = await this.repo.findById(id);
+    if (!pedido) throw new Error("Erro ao criar pedido.");
+
+    // Dispara o pipeline em background — retorna imediatamente para o cliente
+    setImmediate(() => {
+      runAutoSlicePipeline(id).catch((err) => {
+        console.error(`[SERVICE] Pipeline falhou para pedido ${id}:`, err.message);
+      });
+    });
+
+    return pedido;
   }
 
-  async atualizar(id: number, data: UpdatePedidoServiceDTO): Promise<Pedido | null> {
-    const pedido = await this.pedidoRepository.findById(id);
-
-    if (!pedido) {
-      throw new Error("Pedido não encontrado.");
-    }
-
-    await this.pedidoRepository.update(id, data);
-    return this.pedidoRepository.findById(id);
+  async atualizar(id: number, data: UpdatePedidoServiceDTO): Promise<Pedido> {
+    const pedido = await this.repo.findById(id);
+    if (!pedido) throw new Error("Pedido não encontrado.");
+    await this.repo.update(id, data);
+    return (await this.repo.findById(id))!;
   }
 
   async remover(id: number): Promise<{ message: string }> {
-    const pedido = await this.pedidoRepository.findById(id);
-
-    if (!pedido) {
-      throw new Error("Pedido não encontrado.");
+    const pedido = await this.repo.findById(id);
+    if (!pedido) throw new Error("Pedido não encontrado.");
+    const bloqueados: StatusPedido[] = ["em_impressao", "na_fila", "concluido"];
+    if (bloqueados.includes(pedido.status)) {
+      throw new Error(`Não é possível remover um pedido com status "${pedido.status}".`);
     }
-
-    await this.pedidoRepository.delete(id);
+    await this.repo.delete(id);
     return { message: "Pedido removido com sucesso." };
   }
 }

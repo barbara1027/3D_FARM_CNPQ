@@ -10,6 +10,12 @@ import { PrinterAdapterFactory } from "./comunicacao/printer-adapter.factory";
 import { ImpressoraOrquestradorService } from "./comunicacao/orquestrador.service";
 import { PrinterHealthCheckResult } from "./comunicacao/tipos";
 
+export interface ProgressoImpressora {
+  progressoPct: number | null;
+  tempoRestanteS: number | null;
+  statusFisico: string;
+}
+
 export interface CreateImpressoraServiceDTO {
   nome: string;
   modelo: string;
@@ -110,7 +116,27 @@ export class ImpressoraService {
     return this.orquestrador.liberarImpressora(idImpressora);
   }
 
+  async confirmarRemocao(idImpressora: number): Promise<Impressora> {
+    return this.orquestrador.confirmarRemocao(idImpressora);
+  }
+
   async listarEventos(idImpressora: number, limit = 20) {
     return this.orquestrador.listarEventos(idImpressora, limit);
+  }
+
+  async obterProgresso(id: number): Promise<ProgressoImpressora> {
+    const impressora = await this.impressoraRepository.findById(id);
+    if (!impressora) throw new Error("Impressora não encontrada.");
+    const adapter = this.adapterFactory.getAdapter(impressora.api);
+    try {
+      const status = await adapter.getStatus(impressora);
+      return {
+        progressoPct: status.progressoPct ?? null,
+        tempoRestanteS: status.tempoRestanteS ?? null,
+        statusFisico: status.statusFisico,
+      };
+    } catch {
+      return { progressoPct: null, tempoRestanteS: null, statusFisico: "desconhecido" };
+    }
   }
 }

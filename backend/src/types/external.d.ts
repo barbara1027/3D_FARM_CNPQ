@@ -1,63 +1,24 @@
-declare module "mysql2/promise" {
-  const mysql: any;
-  export default mysql;
-}
+// Este arquivo existia para prover tipos quando não havia @types/* instalados.
+// Como o package.json já inclui @types/express, @types/bcrypt, @types/multer etc.,
+// as declarações antigas foram removidas para evitar conflitos de tipo.
 
-declare module "bcrypt" {
-  const bcrypt: any;
-  export default bcrypt;
-}
-
-declare module "express" {
-  export type Request = any;
-  export type Response = any;
-  export interface Router {
-    use: (...args: any[]) => any;
-    get: (...args: any[]) => any;
-    post: (...args: any[]) => any;
-    put: (...args: any[]) => any;
-    patch: (...args: any[]) => any;
-    delete: (...args: any[]) => any;
-  }
-  interface ExpressModule {
-    (): any;
-    json: () => any;
-    Router: () => Router;
-  }
-  const express: ExpressModule;
-  export const Router: () => Router;
-  export default express;
-}
-
-declare module "axios" {
-  const axios: {
-    get: (...args: any[]) => Promise<any>;
-    post: (...args: any[]) => Promise<any>;
-  };
-  export default axios;
-}
-
-declare module "form-data" {
-  export default class FormData {
-    append(name: string, value: any, fileName?: string): void;
-    getHeaders(): Record<string, string>;
-  }
-}
+// Mantemos apenas as declarações que não têm pacote @types correspondente:
 
 declare module "node:fs/promises" {
-  export const access: any;
-  export const readFile: any;
+  export const access: (path: string, mode?: number) => Promise<void>;
+  export const readFile: (path: string) => Promise<Buffer>;
 }
 
 declare module "node:fs" {
-  export const constants: any;
+  export const constants: { R_OK: number; W_OK: number; F_OK: number };
 }
 
 declare module "node:path" {
-  const path: any;
+  const path: {
+    basename: (p: string, ext?: string) => string;
+    extname: (p: string) => string;
+    resolve: (...paths: string[]) => string;
+    join: (...paths: string[]) => string;
+  };
   export default path;
 }
-
-declare const process: any;
-declare const Buffer: any;
-type Buffer = any;

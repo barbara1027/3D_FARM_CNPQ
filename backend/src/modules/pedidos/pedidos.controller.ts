@@ -2,100 +2,118 @@ import { Request, Response } from "express";
 import { PedidoService } from "./pedidos.service";
 
 export class PedidoController {
-  constructor(private readonly pedidoService: PedidoService) {}
+  constructor(private readonly service: PedidoService) {}
 
-  listar = async (_req: Request, res: Response) => {
+  listar = async (req: Request, res: Response) => {
     try {
-      const pedidos = await this.pedidoService.listar();
-      return res.status(200).json(pedidos);
-    } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+      const user = req.jwtUser!;
+      const list = user.tipo === "admin"
+        ? await this.service.listar()
+        : await this.service.listarPorUsuario(user.sub);
+      return res.status(200).json(list);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
     }
   };
 
   buscarPorId = async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-
-      if (Number.isNaN(id)) {
-        return res.status(400).json({ message: "ID inválido." });
+      if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+      const p = await this.service.buscarPorId(id);
+      if (!p) return res.status(404).json({ message: "Pedido não encontrado." });
+      const user = req.jwtUser!;
+      if (user.tipo !== "admin" && p.idUsuario !== user.sub) {
+        return res.status(403).json({ message: "Acesso negado." });
       }
-
-      const pedido = await this.pedidoService.buscarPorId(id);
-
-      if (!pedido) {
-        return res.status(404).json({ message: "Pedido não encontrado." });
-      }
-
-      return res.status(200).json(pedido);
-    } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+      return res.status(200).json(p);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
     }
   };
 
+  /**
+   * @swagger
+   * /pedidos:
+   *   post:
+   *     tags: [Pedidos]
+   *     summary: Cria um pedido e inicia análise automática com PrusaSlicer
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [nome, idMaterial, idQualidade, idArquivo]
+   *             properties:
+   *               nome:        { type: string }
+   *               descricao:   { type: string }
+   *               idMaterial:  { type: integer }
+   *               idQualidade: { type: integer }
+   *               idArquivo:   { type: integer }
+   *               parametros:
+   *                 type: object
+   *                 description: Parâmetros de impressão (layerHeight, infill, supports...)
+   *     responses:
+   *       201:
+   *         description: Pedido criado — análise em andamento (status=analisando)
+   */
   criar = async (req: Request, res: Response) => {
     try {
-      const { nome, preco, descricao, idUsuario, idMaterial, idQualidade, idArquivo } = req.body;
+      const { nome, descricao, idMaterial, idQualidade, idArquivo, parametros, quantidade } = req.body;
+      const idUsuario = req.jwtUser!.sub;
 
-      if (
-        !nome ||
-        preco === undefined ||
-        idUsuario === undefined ||
-        idMaterial === undefined ||
-        idQualidade === undefined ||
-        idArquivo === undefined
-      ) {
+      if (!nome || !idMaterial || !idQualidade || !idArquivo) {
         return res.status(400).json({
-          message:
-            "Os campos nome, preco, idUsuario, idMaterial, idQualidade e idArquivo são obrigatórios.",
+          message: "nome, idMaterial, idQualidade e idArquivo são obrigatórios.",
         });
       }
 
-      const pedido = await this.pedidoService.criar({
+      const pedido = await this.service.criar({
         nome,
-        preco,
-        descricao,
+        descricao:   descricao   ?? null,
         idUsuario,
-        idMaterial,
-        idQualidade,
-        idArquivo,
+        idMaterial:  Number(idMaterial),
+        idQualidade: Number(idQualidade),
+        idArquivo:   Number(idArquivo),
+        parametros:  parametros  ?? null,
+        quantidade:  quantidade != null ? Math.max(1, Number(quantidade)) : 1,
       });
 
       return res.status(201).json(pedido);
-    } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
     }
   };
 
   atualizar = async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-
-      if (Number.isNaN(id)) {
-        return res.status(400).json({ message: "ID inválido." });
+      if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+      const existing = await this.service.buscarPorId(id);
+      if (!existing) return res.status(404).json({ message: "Pedido não encontrado." });
+      const user = req.jwtUser!;
+      if (user.tipo !== "admin" && existing.idUsuario !== user.sub) {
+        return res.status(403).json({ message: "Acesso negado." });
       }
-
-      const pedido = await this.pedidoService.atualizar(id, req.body);
-      return res.status(200).json(pedido);
-    } catch (error: any) {
-      const statusCode = error.message === "Pedido não encontrado." ? 404 : 500;
-      return res.status(statusCode).json({ message: error.message });
+      const p = await this.service.atualizar(id, req.body);
+      return res.status(200).json(p);
+    } catch (e: any) {
+      return res.status(e.message === "Pedido não encontrado." ? 404 : 500)
+        .json({ message: e.message });
     }
   };
 
   remover = async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-
-      if (Number.isNaN(id)) {
-        return res.status(400).json({ message: "ID inválido." });
-      }
-
-      const result = await this.pedidoService.remover(id);
-      return res.status(200).json(result);
-    } catch (error: any) {
-      const statusCode = error.message === "Pedido não encontrado." ? 404 : 500;
-      return res.status(statusCode).json({ message: error.message });
+      if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+      return res.status(200).json(await this.service.remover(id));
+    } catch (e: any) {
+      return res.status(e.message === "Pedido não encontrado." ? 404 : 500)
+        .json({ message: e.message });
     }
   };
 }

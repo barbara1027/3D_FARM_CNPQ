@@ -6,6 +6,15 @@ export interface CreateMaterialServiceDTO {
   preco: number;
   status: MaterialStatus;
   cor: string;
+  diametro?: number;
+  tempBicoMin?: number | null;
+  tempBicoMax?: number | null;
+  tempMesaMin?: number | null;
+  tempMesaMax?: number | null;
+  fanMin?: number | null;
+  fanMax?: number | null;
+  camadaMin?: number | null;
+  camadaMax?: number | null;
 }
 
 export interface UpdateMaterialServiceDTO {
@@ -14,6 +23,15 @@ export interface UpdateMaterialServiceDTO {
   preco?: number;
   status?: MaterialStatus;
   cor?: string;
+  diametro?: number;
+  tempBicoMin?: number | null;
+  tempBicoMax?: number | null;
+  tempMesaMin?: number | null;
+  tempMesaMax?: number | null;
+  fanMin?: number | null;
+  fanMax?: number | null;
+  camadaMin?: number | null;
+  camadaMax?: number | null;
 }
 
 export class MaterialService {
@@ -32,28 +50,24 @@ export class MaterialService {
     return this.materialRepository.findById(id);
   }
 
-  async atualizar(
-    id: number,
-    data: UpdateMaterialServiceDTO,
-  ): Promise<Material | null> {
+  async atualizar(id: number, data: UpdateMaterialServiceDTO): Promise<Material | null> {
     const material = await this.materialRepository.findById(id);
-
-    if (!material) {
-      throw new Error("Material não encontrado.");
-    }
-
+    if (!material) throw new Error("Material não encontrado.");
     await this.materialRepository.update(id, data);
     return this.materialRepository.findById(id);
   }
 
   async remover(id: number): Promise<{ message: string }> {
     const material = await this.materialRepository.findById(id);
-
-    if (!material) {
-      throw new Error("Material não encontrado.");
+    if (!material) throw new Error("Material não encontrado.");
+    try {
+      await this.materialRepository.delete(id);
+    } catch (e: any) {
+      if (e.code === 'ER_ROW_IS_REFERENCED_2' || e.errno === 1451) {
+        throw new Error("Este material está vinculado a pedidos existentes e não pode ser removido. Marque-o como indisponível.");
+      }
+      throw e;
     }
-
-    await this.materialRepository.delete(id);
     return { message: "Material removido com sucesso." };
   }
 }

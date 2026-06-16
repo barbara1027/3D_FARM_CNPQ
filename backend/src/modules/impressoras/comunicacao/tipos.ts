@@ -28,6 +28,8 @@ export interface PrinterRuntimeStatus {
   statusFisico: string;
   jobRemotoId?: string | null;
   mensagem?: string | null;
+  progressoPct?: number | null;   // 0–100, null if not available
+  tempoRestanteS?: number | null; // seconds remaining, null if unknown
   detalhes?: unknown;
 }
 

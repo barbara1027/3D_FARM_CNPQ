@@ -4,6 +4,7 @@ export interface CreateArquivoServiceDTO {
   nome: string;
   tipo: TipoArquivo;
   caminho: string;
+  tamanhoMb?: number;
 }
 
 export class ArquivoService {
@@ -24,11 +25,7 @@ export class ArquivoService {
 
   async remover(id: number): Promise<{ message: string }> {
     const arquivo = await this.arquivoRepository.findById(id);
-
-    if (!arquivo) {
-      throw new Error("Arquivo não encontrado.");
-    }
-
+    if (!arquivo) throw new Error("Arquivo não encontrado.");
     await this.arquivoRepository.delete(id);
     return { message: "Arquivo removido com sucesso." };
   }

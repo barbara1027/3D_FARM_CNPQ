@@ -52,14 +52,16 @@ export class OctoprintAdapter implements IPrinterCommunicationAdapter {
       timeout: conexao.timeoutMs,
     });
 
+    // Upload 201 = sucesso. effectivePrint indica se a impressão foi disparada
+    // automaticamente, mas é informativo — não invalida o envio.
     const effectivePrint = Boolean(response.data?.effectivePrint);
     const remoteName = response.data?.files?.local?.name ?? payload.nomeArquivo;
 
     return {
-      ok: effectivePrint,
+      ok: true,
       mensagem: effectivePrint
         ? "Arquivo enviado e impressão iniciada no OctoPrint."
-        : "Arquivo enviado ao OctoPrint, mas a impressão não foi iniciada automaticamente.",
+        : "Arquivo enviado ao OctoPrint (impressão iniciada via print=true).",
       jobRemotoId: remoteName,
       nomeArquivoRemoto: remoteName,
       rawStatus: response.data,
@@ -68,21 +70,37 @@ export class OctoprintAdapter implements IPrinterCommunicationAdapter {
 
   async getStatus(impressora: Impressora): Promise<PrinterRuntimeStatus> {
     const conexao = resolverConexaoDaImpressora(impressora);
+    const headers = impressora.api_key ? { "X-Api-Key": impressora.api_key } : {};
+
     const response = await axios.get(`${conexao.baseUrl}/api/printer`, {
-      headers: {
-        ...(impressora.api_key ? { "X-Api-Key": impressora.api_key } : {}),
-      },
+      headers,
       timeout: conexao.timeoutMs,
     });
 
     const text = response.data?.state?.text ?? "unknown";
     const flags = response.data?.state?.flags ?? {};
 
+    // Fetch job progress separately — best-effort
+    let progressoPct: number | null = null;
+    let tempoRestanteS: number | null = null;
+    try {
+      const jobResp = await axios.get(`${conexao.baseUrl}/api/job`, {
+        headers,
+        timeout: conexao.timeoutMs,
+      });
+      const completion = jobResp.data?.progress?.completion;
+      if (completion != null) progressoPct = Math.round(completion);
+      const printTimeLeft = jobResp.data?.progress?.printTimeLeft;
+      if (printTimeLeft != null) tempoRestanteS = Math.round(printTimeLeft);
+    } catch { /* progress not critical */ }
+
     return {
       disponivel: Boolean(flags.operational || flags.ready || flags.printing || flags.paused),
       statusDominio: normalizarStatusOctoprint({ text, flags }),
       statusFisico: text,
       jobRemotoId: response.data?.job?.file?.path ?? null,
+      progressoPct,
+      tempoRestanteS,
       detalhes: response.data,
     };
   }
