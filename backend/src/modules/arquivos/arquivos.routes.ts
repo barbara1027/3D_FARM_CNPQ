@@ -3,7 +3,7 @@ import { Router, Request, Response } from "express";
 import { ArquivoController, upload } from "./arquivos.controller";
 import { ArquivoRepository } from "./arquivos.repository";
 import { ArquivoService } from "./arquivos.service";
-import { authMiddleware } from "../../middleware/auth.middleware";
+import { authMiddleware, adminMiddleware } from "../../middleware/auth.middleware";
 import { db } from "../../database/connection";
 
 const arquivosRoutes = Router();
@@ -52,6 +52,6 @@ arquivosRoutes.get("/:id/download", authMiddleware, async (req: Request, res: Re
 
 arquivosRoutes.get("/:id", authMiddleware, arquivoController.buscarPorId);
 arquivosRoutes.post("/upload", authMiddleware, upload.single("arquivo"), arquivoController.uploadArquivo);
-arquivosRoutes.delete("/:id", authMiddleware, arquivoController.remover);
+arquivosRoutes.delete("/:id", authMiddleware, adminMiddleware, arquivoController.remover);
 
 export { arquivosRoutes };

@@ -26,6 +26,10 @@ export interface Impressora {
   ultimaSincronizacao: string | null;
   idMaterial: number | null;
   idPedidoAtual: number | null;
+  eficiencia: number;
+  taxaErroRecente: number;
+  tempoParaFicarLivreHoras: number;
+  capacidadeDiaHoras: number;
 }
 
 export interface ImpressoraEvento {

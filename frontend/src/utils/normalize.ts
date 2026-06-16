@@ -2,17 +2,25 @@
 
 export function normalizePedido(p: any) {
   if (!p) return null;
+  const n = (v: unknown) => (v != null ? Number(v) : null);
   return {
     ...p,
-    preco:              Number(p.preco ?? 0),
-    materialGramas:     p.materialGramas !== null ? Number(p.materialGramas) : null,
-    tempoEstimadoS:     p.tempoEstimadoS !== null ? Number(p.tempoEstimadoS) : null,
-    scoreComplexidade:  p.scoreComplexidade !== null ? Number(p.scoreComplexidade) : null,
-    precoBase:          p.precoBase !== null ? Number(p.precoBase) : null,
-    taxaComplexidade:   p.taxaComplexidade !== null ? Number(p.taxaComplexidade) : null,
-    taxaStripe:         p.taxaStripe !== null ? Number(p.taxaStripe) : null,
-    idUsuario:          Number(p.idUsuario ?? 0),
-    idMaterial:         Number(p.idMaterial ?? 0)
+    preco:                    Number(p.preco ?? 0),
+    idUsuario:                Number(p.idUsuario ?? 0),
+    idMaterial:               Number(p.idMaterial ?? 0),
+    materialGramas:           n(p.materialGramas),
+    tempoEstimadoS:           n(p.tempoEstimadoS),
+    scoreComplexidade:        n(p.scoreComplexidade),
+    precoBase:                n(p.precoBase),
+    taxaComplexidade:         n(p.taxaComplexidade),
+    taxaStripe:               n(p.taxaStripe),
+    tempoGcodeHoras:          n(p.tempoGcodeHoras),
+    prazoEntregaHoras:        n(p.prazoEntregaHoras),
+    etaHorasEstimado:         n(p.etaHorasEstimado),
+    tempoMaximoEsperaHoras:   n(p.tempoMaximoEsperaHoras),
+    bufferPrioridadeHoras:    n(p.bufferPrioridadeHoras),
+    bufferSegurancaHoras:     n(p.bufferSegurancaHoras),
+    tempoExecFarmHoras:       n(p.tempoExecFarmHoras),
   };
 }
 

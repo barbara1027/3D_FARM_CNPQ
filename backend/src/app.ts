@@ -4,6 +4,8 @@ import path from "path";
 import session from "express-session";
 import passport from "passport";
 import swaggerUi from "swagger-ui-express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { router } from "./routes";
 import { swaggerSpec } from "./config/swagger";
 import { configureGoogleStrategy } from "./modules/auth/google.strategy";
@@ -11,17 +13,36 @@ import { stripeWebhook } from "./modules/pedidos/stripe.controller";
 
 const app = express();
 
+// ── Segurança — headers HTTP ──────────────────────────────────────────────────
+app.use(helmet());
+
 // ── CORS ──────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: [
     "http://localhost:5173",
     "http://localhost:5174",
-    "http://localhost:3000",
   ],
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 }));
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Muitas tentativas. Tente novamente em 15 minutos." },
+});
+
+const cadastroLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Limite de cadastros atingido. Tente novamente em 1 hora." },
+});
 
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhook);
 
@@ -46,9 +67,7 @@ configureGoogleStrategy();
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ── Uploads estáticos ────────────────────────────────────────────────────────
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "uploads";
-app.use("/uploads", express.static(path.resolve(UPLOAD_DIR)));
+// Arquivos de upload não são servidos como estáticos — acesso via /arquivos/:id com autenticação
 
 // ── Swagger ───────────────────────────────────────────────────────────────────
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -61,6 +80,8 @@ app.get("/docs.json", (_req, res) => {
 });
 
 // ── Rotas ─────────────────────────────────────────────────────────────────────
+app.use("/auth/login", authLimiter);
+app.use("/usuarios", cadastroLimiter);
 app.use(router);
 
 // ── Health check ──────────────────────────────────────────────────────────────

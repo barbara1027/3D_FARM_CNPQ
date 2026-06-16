@@ -2,14 +2,23 @@ import { Request, Response } from "express";
 import Stripe from "stripe";
 import { db } from "../../database/connection";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2025-04-30.basil" as any });
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY não configurada no .env.");
+  return new Stripe(key, { apiVersion: "2025-04-30.basil" as any });
+}
 
 export const stripeWebhook = async (req: Request, res: Response) => {
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    return res.status(500).json({ message: "STRIPE_WEBHOOK_SECRET não configurado." });
+  }
+
   const sig = req.headers["stripe-signature"];
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig!, process.env.STRIPE_WEBHOOK_SECRET!);
+    event = getStripe().webhooks.constructEvent(req.body, sig!, webhookSecret);
   } catch (err: any) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }

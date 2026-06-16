@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS impressoras (
   ultimo_erro TEXT NULL,
   ultima_sincronizacao TIMESTAMP NULL,
   id_material INT NULL,
+  id_pedido_atual INT NULL,
   eficiencia DECIMAL(5,2) NOT NULL DEFAULT 1.00,
   taxa_erro_recente DECIMAL(5,4) NOT NULL DEFAULT 0.0000,
   tempo_para_ficar_livre_horas DECIMAL(7,2) NOT NULL DEFAULT 0.00,

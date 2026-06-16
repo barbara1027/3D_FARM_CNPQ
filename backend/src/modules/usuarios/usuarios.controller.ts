@@ -90,16 +90,11 @@ export class UsuarioController {
    */
   criar = async (req: Request, res: Response) => {
     try {
-      const { nome, email, senha, tipo } = req.body;
+      const { nome, email, senha } = req.body;
       if (!nome || !email || !senha) {
         return res.status(400).json({ message: "Os campos nome, email e senha são obrigatórios." });
       }
-      const usuario = await this.usuarioService.criar({
-        nome,
-        email,
-        senha,
-        tipo: tipo ?? "cliente",
-      });
+      const usuario = await this.usuarioService.criar({ nome, email, senha, tipo: "cliente" });
       return res.status(201).json(usuario);
     } catch (error: any) {
       const statusCode = error.message === "Já existe um usuário com este email." ? 400 : 500;
@@ -137,7 +132,18 @@ export class UsuarioController {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
-      const { nome, email, senha, tipo } = req.body;
+
+      const caller = req.jwtUser!;
+      const isAdmin = caller.tipo === "admin";
+
+      if (!isAdmin && caller.sub !== id) {
+        return res.status(403).json({ message: "Sem permissão para alterar este usuário." });
+      }
+
+      const { nome, email, senha } = req.body;
+      // Somente admins podem promover/rebaixar usuários
+      const tipo = isAdmin ? req.body.tipo : undefined;
+
       const usuario = await this.usuarioService.atualizar(id, { nome, email, senha, tipo });
       return res.status(200).json(usuario);
     } catch (error: any) {

@@ -8,7 +8,9 @@ export function AuthCallbackPage() {
   const location = useLocation();
 
   useEffect(() => {
-    const p = new URLSearchParams(location.search);
+    // Token vem no fragment (#token=...&tipo=...) para não aparecer em logs do servidor
+    const hash = location.hash.replace(/^#/, '');
+    const p = new URLSearchParams(hash);
     const token = p.get('token');
     const tipo = p.get('tipo');
     if (token && tipo) {

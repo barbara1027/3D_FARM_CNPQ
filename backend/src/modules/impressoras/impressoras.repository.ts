@@ -289,8 +289,8 @@ export class ImpressoraRepository {
       FROM impressora_eventos
       WHERE id_impressora = ?
       ORDER BY id DESC
-      LIMIT ${parsedLimit}
-    `, [idImpressora]);
+      LIMIT ?
+    `, [idImpressora, parsedLimit]);
     return rows as ImpressoraEvento[];
   }
 }

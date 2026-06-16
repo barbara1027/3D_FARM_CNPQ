@@ -12,6 +12,7 @@ import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import api from '../services/api';
 import type { Pedido } from '../types/Pedido';
 import { getStatusTranslation, getStatusColor } from '../utils/translations';
+import { normalizePedido } from '../utils/normalize';
 
 function formatTime(s: number | null): string {
   if (!s) return '—';
@@ -36,15 +37,7 @@ export function QuotesPage() {
   const fetchPedidos = useCallback(() => {
     api.get<any[]>('/pedidos')
       .then(r => {
-        const all = r.data.map((p: any) => ({
-          ...p,
-          preco:             n(p.preco),
-          tempoEstimadoS:    p.tempoEstimadoS    ? Number(p.tempoEstimadoS)    : null,
-          materialGramas:    p.materialGramas    ? Number(p.materialGramas)    : null,
-          precoBase:         p.precoBase         ? Number(p.precoBase)         : null,
-          taxaComplexidade:  p.taxaComplexidade  ? Number(p.taxaComplexidade)  : null,
-          taxaStripe:        p.taxaStripe        ? Number(p.taxaStripe)        : null,
-        }));
+        const all = r.data.map((p: any) => normalizePedido(p) as Pedido);
 
         const VISIBLE: Pedido['status'][] = ['analisando', 'aguardando_pagamento', 'aguardando_revisao'];
         setPedidos(

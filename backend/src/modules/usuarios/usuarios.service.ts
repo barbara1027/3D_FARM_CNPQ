@@ -1,7 +1,7 @@
 import bcrypt from "bcrypt";
 import { Usuario, UsuarioRepository, UsuarioTipo } from "./usuarios.repository";
 
-export type UsuarioPublico = Omit<Usuario, "senha_hash">;
+export type UsuarioPublico = Omit<Usuario, "senha_hash" | "google_id">;
 
 export interface CreateUsuarioServiceDTO {
   nome: string;
@@ -25,7 +25,7 @@ export interface UpsertGoogleUsuarioDTO {
 }
 
 function omitSenha(u: Usuario): UsuarioPublico {
-  const { senha_hash, ...rest } = u;
+  const { senha_hash: _s, google_id: _g, ...rest } = u;
   return rest;
 }
 

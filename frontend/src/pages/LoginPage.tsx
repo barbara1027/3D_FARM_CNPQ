@@ -48,7 +48,7 @@ export function LoginPage() {
         <Divider sx={{ my: 2 }}>ou</Divider>
 
         <Button fullWidth variant="outlined" startIcon={<GoogleIcon />}
-          href="http://localhost:3333/auth/google">
+          href={`${api.defaults.baseURL}/auth/google`}>
           Entrar com Google
         </Button>
 

@@ -78,16 +78,31 @@ CREATE TABLE IF NOT EXISTS pedidos (
   id_qualidade        INT UNSIGNED NOT NULL,
   id_arquivo          INT UNSIGNED NOT NULL,
   
-  -- Campos de análise do Slicer e Precificação detalhada [cite: 274]
-  parametros          JSON NULL,             -- Guarda layerHeight, infill, etc. [cite: 262]
-  gcode_path          VARCHAR(512) NULL,     -- Caminho do arquivo gerado [cite: 272]
-  tempo_estimado_s    INT UNSIGNED NULL,     -- Tempo em segundos [cite: 274]
-  material_gramas     DECIMAL(10,4) NULL,    -- Peso do material [cite: 274]
-  score_complexidade  DECIMAL(5,4) NULL,     -- Score 0-1 [cite: 274]
-  motivo_complexidade TEXT NULL,             -- Texto para o admin [cite: 274]
-  preco_base          DECIMAL(10,2) NULL,    -- Subtotal sem taxas extras [cite: 274]
-  taxa_complexidade   DECIMAL(10,2) NULL,    -- Sobretaxa de risco [cite: 274]
-  taxa_stripe         DECIMAL(10,2) NULL,    -- Taxa embutida do gateway [cite: 274]
+  -- Campos de análise do Slicer e Precificação detalhada
+  parametros          JSON NULL,
+  quantidade          INT UNSIGNED NOT NULL DEFAULT 1,
+  gcode_path          VARCHAR(512) NULL,
+  tempo_estimado_s    INT UNSIGNED NULL,
+  material_gramas     DECIMAL(10,4) NULL,
+  score_complexidade  DECIMAL(5,4) NULL,
+  motivo_complexidade TEXT NULL,
+  preco_base          DECIMAL(10,2) NULL,
+  taxa_complexidade   DECIMAL(10,2) NULL,
+  taxa_stripe         DECIMAL(10,2) NULL,
+
+  -- Campos de fila e ETA
+  tempo_gcode_horas         DECIMAL(7,2) NULL,
+  prazo_entrega_horas       DECIMAL(7,2) NULL,
+  prazo_entrega             DATETIME NULL,
+  eta_horas_estimado        DECIMAL(8,2) NULL,
+  eta_calculado_em          DATETIME NULL,
+  prazo_entrega_original    DATETIME NULL,
+  limite_inicio_impressao   DATETIME NULL,
+  prioridade_paga           BOOLEAN NOT NULL DEFAULT FALSE,
+  tempo_maximo_espera_horas DECIMAL(8,2) NULL,
+  buffer_prioridade_horas   DECIMAL(8,2) NULL,
+  buffer_seguranca_horas    DECIMAL(8,2) NULL,
+  tempo_exec_farm_horas     DECIMAL(8,2) NULL,
 
   created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -115,9 +130,14 @@ CREATE TABLE IF NOT EXISTS impressoras (
   job_remoto_id        VARCHAR(255) NULL,
   ultimo_erro          TEXT NULL,
   ultima_sincronizacao DATETIME NULL,
-  id_material          INT UNSIGNED NULL,
-  created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  id_material                  INT UNSIGNED NULL,
+  id_pedido_atual              INT UNSIGNED NULL,
+  eficiencia                   DECIMAL(5,2) NOT NULL DEFAULT 1.00,
+  taxa_erro_recente            DECIMAL(5,4) NOT NULL DEFAULT 0.0000,
+  tempo_para_ficar_livre_horas DECIMAL(7,2) NOT NULL DEFAULT 0.00,
+  capacidade_dia_horas         DECIMAL(7,2) NOT NULL DEFAULT 8.00,
+  created_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at                   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_impressora_material FOREIGN KEY (id_material) REFERENCES materiais(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
@@ -132,4 +152,21 @@ CREATE TABLE IF NOT EXISTS impressora_eventos (
   payload_json  JSON NULL,
   created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_evento_impressora FOREIGN KEY (id_impressora) REFERENCES impressoras(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- -----------------------------------------------------------------
+-- chat_mensagens
+-- -----------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS chat_mensagens (
+  id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  id_pedido      INT UNSIGNED NOT NULL,
+  id_remetente   INT UNSIGNED NOT NULL,
+  tipo_remetente ENUM('admin','cliente') NOT NULL,
+  mensagem       TEXT NOT NULL,
+  lido           TINYINT(1) NOT NULL DEFAULT 0,
+  criado_em      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_chat_pedido    FOREIGN KEY (id_pedido)    REFERENCES pedidos(id)   ON DELETE CASCADE  ON UPDATE CASCADE,
+  CONSTRAINT fk_chat_remetente FOREIGN KEY (id_remetente) REFERENCES usuarios(id)  ON DELETE RESTRICT ON UPDATE CASCADE,
+  INDEX idx_chat_pedido    (id_pedido),
+  INDEX idx_chat_nao_lidas (id_pedido, tipo_remetente, lido)
 ) ENGINE=InnoDB;

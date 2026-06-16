@@ -124,30 +124,6 @@ function toNullableNumber(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
 }
 
-function mapPedido(row: any): Pedido {
-  return {
-    ...row,
-    id: toNumber(row.id),
-    preco: toNumber(row.preco),
-    idUsuario: toNumber(row.idUsuario),
-    idMaterial: toNumber(row.idMaterial),
-    idQualidade: toNumber(row.idQualidade),
-    idArquivo: toNumber(row.idArquivo),
-    tempoGcodeHoras: toNumber(row.tempoGcodeHoras),
-    prazoEntregaHoras: toNumber(row.prazoEntregaHoras),
-    prazoEntrega: row.prazoEntrega ?? null,
-    etaHorasEstimado: toNullableNumber(row.etaHorasEstimado),
-    etaCalculadoEm: row.etaCalculadoEm ?? null,
-    prazoEntregaOriginal: row.prazoEntregaOriginal ?? null,
-    limiteInicioImpressao: row.limiteInicioImpressao ?? null,
-    prioridadePaga: toBoolean(row.prioridadePaga),
-    tempoMaximoEsperaHoras: toNullableNumber(row.tempoMaximoEsperaHoras),
-    bufferPrioridadeHoras: toNullableNumber(row.bufferPrioridadeHoras),
-    bufferSegurancaHoras: toNullableNumber(row.bufferSegurancaHoras),
-    tempoExecFarmHoras: toNullableNumber(row.tempoExecFarmHoras),
-  } as Pedido;
-}
-
 function mapPedidoOtimizacao(row: any): PedidoOtimizacaoRow {
   return {
     id: toNumber(row.id),
@@ -159,34 +135,6 @@ function mapPedidoOtimizacao(row: any): PedidoOtimizacaoRow {
     criadoEm: row.criadoEm,
     prioridadePaga: toBoolean(row.prioridadePaga),
   };
-}
-
-function selectPedidoColumns() {
-  return `
-    SELECT
-      id,
-      nome,
-      preco,
-      descricao,
-      id_usuario AS idUsuario,
-      id_material AS idMaterial,
-      id_qualidade AS idQualidade,
-      id_arquivo AS idArquivo,
-      status,
-      tempo_gcode_horas AS tempoGcodeHoras,
-      prazo_entrega_horas AS prazoEntregaHoras,
-      DATE_FORMAT(prazo_entrega, '%Y-%m-%d %H:%i:%s') AS prazoEntrega,
-      eta_horas_estimado AS etaHorasEstimado,
-      DATE_FORMAT(eta_calculado_em, '%Y-%m-%d %H:%i:%s') AS etaCalculadoEm,
-      DATE_FORMAT(prazo_entrega_original, '%Y-%m-%d %H:%i:%s') AS prazoEntregaOriginal,
-      DATE_FORMAT(limite_inicio_impressao, '%Y-%m-%d %H:%i:%s') AS limiteInicioImpressao,
-      prioridade_paga AS prioridadePaga,
-      tempo_maximo_espera_horas AS tempoMaximoEsperaHoras,
-      buffer_prioridade_horas AS bufferPrioridadeHoras,
-      buffer_seguranca_horas AS bufferSegurancaHoras,
-      tempo_exec_farm_horas AS tempoExecFarmHoras
-    FROM pedidos
-  `;
 }
 
 const SEL = `

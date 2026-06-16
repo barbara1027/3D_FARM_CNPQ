@@ -27,9 +27,10 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       const path = window.location.pathname;
       if (path !== '/login' && path !== '/admin/login') {
+        const userType = localStorage.getItem('user_type');
         localStorage.removeItem('access_token');
         localStorage.removeItem('user_type');
-        window.location.href = '/login';
+        window.location.href = userType === 'admin' ? '/admin/login' : '/login';
       }
     }
     return Promise.reject(error);

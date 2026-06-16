@@ -52,7 +52,8 @@ authRoutes.get(
       tipo: usuario.tipo,
     });
     const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
-    res.redirect(`${frontendUrl}/auth/callback?token=${token}&tipo=${usuario.tipo}`);
+    // Token no fragment (#) — não aparece em logs do servidor nem no header Referer
+    res.redirect(`${frontendUrl}/auth/callback#token=${token}&tipo=${usuario.tipo}`);
   }
 );
 

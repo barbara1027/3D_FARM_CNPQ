@@ -19,14 +19,21 @@ const storage = multer.diskStorage({
   },
 });
 
+const ALLOWED_EXTS = [".stl", ".gcode", ".gco", ".g"];
+// MIME types rejeitados explicitamente — texto/imagem/executável nunca são modelos 3D
+const BLOCKED_MIMES = ["text/html", "text/javascript", "application/javascript",
+  "image/jpeg", "image/png", "image/gif", "application/x-msdownload",
+  "application/x-executable", "application/x-sh"];
+
 const fileFilter = (_req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const allowed = [".stl", ".gcode", ".gco", ".g"];
   const ext = path.extname(file.originalname).toLowerCase();
-  if (allowed.includes(ext)) {
-    cb(null, true);
-  } else {
-    cb(new Error("Apenas arquivos .stl e .gcode são permitidos."));
+  if (!ALLOWED_EXTS.includes(ext)) {
+    return cb(new Error("Apenas arquivos .stl e .gcode são permitidos."));
   }
+  if (BLOCKED_MIMES.includes(file.mimetype)) {
+    return cb(new Error("Tipo de conteúdo não permitido."));
+  }
+  cb(null, true);
 };
 
 export const upload = multer({

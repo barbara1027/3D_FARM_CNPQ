@@ -1,9 +1,14 @@
 import Stripe from 'stripe';
 import { PedidoRepository } from './pedidos.repository';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2025-04-30.basil' as any });
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY não configurada no .env.");
+  return new Stripe(key, { apiVersion: '2025-04-30.basil' as any });
+}
 
 export async function criarSessaoCheckout(pedidoId: number) {
+  const stripe = getStripe();
   const repo = new PedidoRepository();
   const pedido = await repo.findById(pedidoId);
 
