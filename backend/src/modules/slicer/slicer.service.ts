@@ -118,14 +118,31 @@ export async function runPrusaSlicer(
 
   return new Promise((resolve, reject) => {
     const proc = spawn(prusaExe, args);
+    let stdout = "";
     let stderr = "";
+    proc.stdout.on("data", (d) => { stdout += d.toString(); });
     proc.stderr.on("data", (d) => { stderr += d.toString(); });
     proc.on("error", (err) =>
       reject(new Error(`PrusaSlicer não encontrado: ${err.message}\nVerifique PRUSA_SLICER_PATH no .env`))
     );
-    proc.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`PrusaSlicer saiu com código ${code}: ${stderr.slice(0, 400)}`));
+    proc.on("close", async (code) => {
+      if (code !== 0) {
+        reject(new Error(`PrusaSlicer saiu com código ${code}: ${stderr.slice(0, 400)}`));
+        return;
+      }
+      // PrusaSlicer pode sair com código 0 sem gerar o arquivo (ex.: peça fora
+      // do volume de impressão, mesa/objeto incompatíveis) — a mensagem real
+      // some no stdout, não afeta o exit code.
+      const outputExists = await fs.stat(outputPath).then(() => true).catch(() => false);
+      if (!outputExists) {
+        const detail = (stdout + stderr).trim().slice(0, 400);
+        reject(new Error(
+          `PrusaSlicer terminou sem erro mas não gerou o G-code.` +
+          (detail ? ` Saída: ${detail}` : ""),
+        ));
+        return;
+      }
+      resolve();
     });
   });
 }

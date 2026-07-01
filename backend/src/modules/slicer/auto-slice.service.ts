@@ -129,10 +129,13 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
 
     const gcodePath = gcodeOutputPath(pedidoId);
     await runPrusaSlicer(stlAbsolute, gcodePath, sliceParams);
+
+    const gcodeStats = await fs.stat(gcodePath).catch(() => {
+      throw new Error(`G-code não encontrado em ${gcodePath} após o slicing.`);
+    });
     console.log(`[AUTO-SLICE] G-code gerado: ${gcodePath}`);
 
     // Registra o GCode na tabela arquivos (upsert)
-    const gcodeStats = await fs.stat(gcodePath).catch(() => ({ size: 0 }));
     const arquivoRepo = new ArquivoRepository();
     await arquivoRepo.upsertGcode(pedidoId, gcodePath, gcodeStats.size / 1_000_000);
 
