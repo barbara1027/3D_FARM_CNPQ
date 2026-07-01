@@ -79,10 +79,10 @@ Depois rode npm run seed novamente.
   console.log("✓ Materiais criados (4 disponíveis, 1 indisponível)");
 
   await db.execute(`
-    INSERT INTO qualidades (nome, altura, espessura, preenchimento, velocidade, temperatura_bico, temperatura_mesa, suporte, adesao) VALUES
-    ('Normal',         0.200, 1.2, 20, 60, 210, 60, 0, 0),
-    ('Qualidade',      0.150, 1.6, 25, 50, 215, 60, 0, 0),
-    ('Alta Qualidade', 0.100, 2.0, 30, 40, 215, 60, 1, 1)
+    INSERT INTO qualidades (nome, altura, espessura, velocidade, suporte, adesao, perimetros, camadas_topo, camadas_base, angulo_suporte) VALUES
+    ('Normal',         0.200, 1.2, 60, 0, 0, 2, 3, 3, 45),
+    ('Qualidade',      0.150, 1.6, 50, 0, 0, 3, 4, 4, 50),
+    ('Alta Qualidade', 0.100, 2.0, 40, 1, 1, 3, 5, 5, 50)
   `);
   console.log("✓ Qualidades criadas (Normal, Qualidade, Alta Qualidade)");
 

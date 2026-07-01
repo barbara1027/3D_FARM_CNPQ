@@ -1,5 +1,5 @@
 import bcrypt from "bcrypt";
-import { Usuario, UsuarioRepository, UsuarioTipo } from "./usuarios.repository";
+import { Usuario, UsuarioRepository, UsuarioTipo, UsuarioNivel } from "./usuarios.repository";
 
 export type UsuarioPublico = Omit<Usuario, "senha_hash" | "google_id">;
 
@@ -8,6 +8,7 @@ export interface CreateUsuarioServiceDTO {
   email: string;
   senha?: string;
   tipo?: UsuarioTipo;
+  nivel?: UsuarioNivel;
 }
 
 export interface UpdateUsuarioServiceDTO {
@@ -15,6 +16,7 @@ export interface UpdateUsuarioServiceDTO {
   email?: string;
   senha?: string;
   tipo?: UsuarioTipo;
+  nivel?: UsuarioNivel;
 }
 
 export interface UpsertGoogleUsuarioDTO {
@@ -51,6 +53,7 @@ export class UsuarioService {
       email: data.email,
       senhaHash,
       tipo: data.tipo ?? "cliente",
+      nivel: data.nivel ?? "iniciante",
     });
     const criado = await this.usuarioRepository.findById(id);
     if (!criado) throw new Error("Erro ao buscar usuário recém-criado.");
@@ -107,6 +110,7 @@ export class UsuarioService {
       email: data.email,
       senhaHash,
       tipo: data.tipo,
+      nivel: data.nivel,
     });
     const atualizado = await this.usuarioRepository.findById(id);
     if (!atualizado) throw new Error("Erro ao buscar usuário atualizado.");

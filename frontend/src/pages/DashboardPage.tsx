@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Container, Typography, Card, CardContent, CircularProgress, Alert,
   Tabs, Tab, Chip, Dialog, DialogTitle, DialogContent, DialogActions,
   Button, List, ListItem, ListItemText, Divider, LinearProgress, Badge,
-  IconButton, TextField,
+  IconButton,
 } from '@mui/material';
 import ChatIcon from '@mui/icons-material/Chat';
 import ReplayIcon from '@mui/icons-material/Replay';
-import AddIcon from '@mui/icons-material/Add';
-import RemoveIcon from '@mui/icons-material/Remove';
+import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import api from '../services/api';
 import type { Pedido } from '../types/Pedido';
 import type { Impressora } from '../types/Impressora';
@@ -16,6 +15,7 @@ import { getStatusTranslation, getStatusColor } from '../utils/translations';
 import { normalizePedido } from '../utils/normalize';
 import { ChatDialog } from '../components/ChatDialog';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 // Somente pedidos que já foram pagos
 const PAID_STATUSES: Pedido['status'][] = ['na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado'];
@@ -72,21 +72,29 @@ function getDeadline(
   return null;
 }
 
+const STATUS_CONTEXTO_INICIANTE: Partial<Record<Pedido['status'], string>> = {
+  na_fila:  'Sua peça está aguardando uma impressora ficar livre. A impressão começa automaticamente.',
+  concluido: 'Sua peça está pronta! Entre em contato para combinar a retirada.',
+  falhou:   'Ocorreu um problema durante a impressão. Entre em contato para resolver.',
+  cancelado: 'Este pedido foi cancelado.',
+};
+
 function PedidoCard({
-  p, progresso, unreadCount, hasChat,
+  p, progresso, unreadCount, isNovo,
   naFilaList, printerByPedido, progressoMap,
-  onView, onChat, onPedirNovamente,
+  onView, onChat, onPedirNovamente, nivelUsuario,
 }: {
   p: Pedido;
   progresso: ProgressoData | null;
   unreadCount: number;
-  hasChat: boolean;
+  isNovo: boolean;
   naFilaList: Pedido[];
   printerByPedido: Map<number, Impressora>;
   progressoMap: Record<number, ProgressoData>;
   onView: (x: Pedido) => void;
   onChat: (x: Pedido) => void;
   onPedirNovamente: (x: Pedido) => void;
+  nivelUsuario: 'iniciante' | 'avancado' | null;
 }) {
   const pct      = progresso?.progressoPct;
   const restante = progresso?.tempoRestanteS;
@@ -95,7 +103,11 @@ function PedidoCard({
 
   return (
     <Card
-      sx={{ mb: 2, cursor: 'pointer', borderRadius: 3, border: '1px solid', borderColor: 'divider' }}
+      sx={{
+        mb: 2, cursor: 'pointer', borderRadius: 3, border: '2px solid',
+        borderColor: isNovo ? 'success.main' : 'divider',
+        boxShadow: isNovo ? '0 0 0 3px rgba(76,175,80,0.15)' : 'none',
+      }}
       elevation={0}
       onClick={() => onView(p)}
     >
@@ -103,18 +115,26 @@ function PedidoCard({
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h6" fontWeight={600}>{p.nome}</Typography>
           <Box display="flex" gap={1} alignItems="center">
-            {hasChat && (
-              <Badge badgeContent={unreadCount || 0} color="error">
-                <IconButton
-                  size="small"
-                  color={unreadCount > 0 ? 'primary' : 'default'}
-                  title="Abrir mensagens"
-                  onClick={e => { e.stopPropagation(); onChat(p); }}
-                >
-                  <ChatIcon fontSize="small" />
-                </IconButton>
-              </Badge>
+            {isNovo && (
+              <Chip
+                size="small"
+                icon={<NewReleasesIcon fontSize="small" />}
+                label="Novo!"
+                color="success"
+                variant="filled"
+                sx={{ fontWeight: 700 }}
+              />
             )}
+            <Badge badgeContent={unreadCount || 0} color="error">
+              <IconButton
+                size="small"
+                color={unreadCount > 0 ? 'primary' : 'default'}
+                title="Abrir mensagens"
+                onClick={e => { e.stopPropagation(); onChat(p); }}
+              >
+                <ChatIcon fontSize="small" />
+              </IconButton>
+            </Badge>
             <Chip size="small" label={getStatusTranslation(p.status)} color={getStatusColor(p.status)} />
           </Box>
         </Box>
@@ -122,6 +142,7 @@ function PedidoCard({
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           {new Date(p.createdAt).toLocaleDateString('pt-BR')}
           {p.nomeMaterial ? ` · ${p.nomeMaterial}` : ''}
+          {nivelUsuario === 'avancado' && (p.materialGramas ?? 0) > 0 ? ` · 🧵 ${Number(p.materialGramas).toFixed(0)}g` : ''}
           {p.preco > 0 ? ` · R$ ${p.preco.toFixed(2)}` : ''}
           {p.quantidade > 1 ? ` · ${p.quantidade}x` : ''}
         </Typography>
@@ -165,13 +186,22 @@ function PedidoCard({
 
         {p.status === 'na_fila' && !deadline && (
           <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-            Na fila · aguardando impressora disponível
+            {nivelUsuario === 'iniciante'
+              ? STATUS_CONTEXTO_INICIANTE.na_fila
+              : 'Na fila · aguardando impressora disponível'}
+          </Typography>
+        )}
+
+        {/* Contexto amigável para iniciante em outros status */}
+        {nivelUsuario === 'iniciante' && (p.status === 'concluido' || p.status === 'falhou' || p.status === 'cancelado') && (
+          <Typography variant="body2" color={p.status === 'concluido' ? 'success.main' : 'text.secondary'} sx={{ mt: 0.75 }}>
+            {STATUS_CONTEXTO_INICIANTE[p.status]}
           </Typography>
         )}
 
         {/* Botão pedir novamente em concluídos */}
         {p.status === 'concluido' && (
-          <Box sx={{ mt: 1.5 }}>
+          <Box sx={{ mt: 1.5, display: 'flex', gap: 1 }}>
             <Button
               size="small"
               variant="outlined"
@@ -189,6 +219,7 @@ function PedidoCard({
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const { nivel } = useAuth();
   const [pedidos, setPedidos]           = useState<Pedido[]>([]);
   const [impressoras, setImpressoras]   = useState<Impressora[]>([]);
   const [progressoMap, setProgressoMap] = useState<Record<number, ProgressoData>>({});
@@ -197,14 +228,26 @@ export function DashboardPage() {
   const [tab, setTab]                   = useState(0);
   const [sel, setSel]                   = useState<Pedido | null>(null);
 
-  const [unreadMap, setUnreadMap]     = useState<Record<number, number>>({});
-  const [hasChatMap, setHasChatMap]   = useState<Record<number, boolean>>({});
-  const [chatPedido, setChatPedido]   = useState<{ id: number; nome: string } | null>(null);
+  const [unreadMap, setUnreadMap]   = useState<Record<number, number>>({});
+  const [chatPedido, setChatPedido] = useState<{ id: number; nome: string } | null>(null);
 
-  // Dialog "pedir novamente"
-  const [reorderPedido, setReorderPedido] = useState<Pedido | null>(null);
-  const [reorderQtd, setReorderQtd]       = useState(1);
-  const [reordering, setReordering]       = useState(false);
+  // Pedidos concluídos "novos" (ainda não vistos pelo usuário)
+  const [seenConcluido, setSeenConcluido] = useState<Set<number>>(() => {
+    try {
+      const raw = localStorage.getItem('seen_concluido');
+      return raw ? new Set(JSON.parse(raw) as number[]) : new Set();
+    } catch { return new Set(); }
+  });
+  const prevPedidosRef = useRef<Pedido[]>([]);
+
+  const markSeen = (id: number) => {
+    setSeenConcluido(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      localStorage.setItem('seen_concluido', JSON.stringify([...next]));
+      return next;
+    });
+  };
 
   const fetchUnreadResumo = useCallback(async () => {
     try {
@@ -212,11 +255,6 @@ export function DashboardPage() {
       setUnreadMap(prev => {
         const next = { ...prev };
         data.forEach(({ idPedido, count }) => { next[idPedido] = count; });
-        return next;
-      });
-      setHasChatMap(prev => {
-        const next = { ...prev };
-        data.forEach(({ idPedido, count }) => { if (count > 0) next[idPedido] = true; });
         return next;
       });
     } catch { /* silencioso */ }
@@ -282,33 +320,37 @@ export function DashboardPage() {
 
   const closeChat = () => {
     if (chatPedido) {
-      setHasChatMap(prev => ({ ...prev, [chatPedido.id]: true }));
       setUnreadMap(prev => ({ ...prev, [chatPedido.id]: 0 }));
     }
     setChatPedido(null);
     fetchUnreadResumo();
   };
 
-  const handlePedirNovamente = async () => {
-    if (!reorderPedido) return;
-    setReordering(true);
-    try {
-      await api.post('/pedidos', {
-        nome:        reorderPedido.nome,
-        preco:       0,
-        descricao:   reorderPedido.descricao,
-        idMaterial:  reorderPedido.idMaterial,
-        idQualidade: reorderPedido.idQualidade,
-        idArquivo:   reorderPedido.idArquivo,
-        quantidade:  reorderQtd,
-      });
-      setReorderPedido(null);
-      navigate('/quotes');
-    } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Erro ao criar pedido.');
-    } finally {
-      setReordering(false);
+  // Gera o próximo nome disponível (ex.: "Minha Peça" → "Minha Peça 2" → "Minha Peça 3")
+  const generateReorderName = (originalNome: string): string => {
+    const base = originalNome.replace(/ \d+$/, '');
+    const existing = new Set(pedidos.map(p => p.nome));
+    if (!existing.has(originalNome) && !existing.has(base)) return base;
+    for (let i = 2; i <= 99; i++) {
+      const candidate = `${base} ${i}`;
+      if (!existing.has(candidate)) return candidate;
     }
+    return `${base} 2`;
+  };
+
+  const handlePedirNovamente = (p: Pedido) => {
+    navigate('/new-order', {
+      state: {
+        reorder: {
+          idArquivo:  p.idArquivo,
+          idMaterial: p.idMaterial,
+          idQualidade: p.idQualidade,
+          parametros:  (p as any).parametros ?? null,
+          nome:        generateReorderName(p.nome),
+          nomeArquivo: p.nomeArquivo,
+        },
+      },
+    });
   };
 
   const naFila = pedidos
@@ -361,13 +403,14 @@ export function DashboardPage() {
             p={p}
             progresso={p.status === 'em_impressao' ? getProgresso(p.id) : null}
             unreadCount={unreadMap[p.id] ?? 0}
-            hasChat={hasChatMap[p.id] ?? false}
+            isNovo={p.status === 'concluido' && !seenConcluido.has(p.id)}
             naFilaList={naFila}
             printerByPedido={printerByPedido}
             progressoMap={progressoMap}
-            onView={p => setSel(p)}
+            onView={p => { if (p.status === 'concluido') markSeen(p.id); setSel(p); }}
             onChat={openChat}
-            onPedirNovamente={p => { setReorderPedido(p); setReorderQtd(p.quantidade || 1); }}
+            onPedirNovamente={handlePedirNovamente}
+            nivelUsuario={nivel}
           />
         ))
       )}
@@ -379,7 +422,14 @@ export function DashboardPage() {
           <DialogContent dividers>
             <List dense>
               <ListItem>
-                <ListItemText primary="Status" secondary={getStatusTranslation(sel.status)} />
+                <ListItemText
+                  primary="Status"
+                  secondary={
+                    nivel === 'iniciante' && STATUS_CONTEXTO_INICIANTE[sel.status]
+                      ? STATUS_CONTEXTO_INICIANTE[sel.status]
+                      : getStatusTranslation(sel.status)
+                  }
+                />
               </ListItem>
               {sel.status === 'em_impressao' && getProgresso(sel.id)?.progressoPct != null && getProgresso(sel.id)!.progressoPct! > 0 && (
                 <ListItem>
@@ -421,6 +471,20 @@ export function DashboardPage() {
               <ListItem>
                 <ListItemText primary="Quantidade" secondary={`${sel.quantidade} unidade${sel.quantidade > 1 ? 's' : ''}`} />
               </ListItem>
+              {/* Detalhes técnicos — apenas para avançado */}
+              {nivel === 'avancado' && (sel.materialGramas ?? 0) > 0 && (
+                <ListItem>
+                  <ListItemText primary="Filamento usado" secondary={`${Number(sel.materialGramas).toFixed(1)}g`} />
+                </ListItem>
+              )}
+              {nivel === 'avancado' && sel.scoreComplexidade != null && (
+                <ListItem>
+                  <ListItemText
+                    primary="Complexidade da peça"
+                    secondary={`${(Number(sel.scoreComplexidade) * 100).toFixed(0)}/100 · ${Number(sel.scoreComplexidade) >= 0.5 ? 'complexa (revisão manual realizada)' : 'dentro do padrão'}`}
+                  />
+                </ListItem>
+              )}
               <Divider component="li" />
               {sel.preco > 0 && (
                 <ListItem>
@@ -453,69 +517,20 @@ export function DashboardPage() {
               <Button
                 variant="outlined"
                 startIcon={<ReplayIcon />}
-                onClick={() => { setSel(null); setReorderPedido(sel); setReorderQtd(sel.quantidade || 1); }}
+                onClick={() => { setSel(null); handlePedirNovamente(sel); }}
               >
                 Pedir novamente
               </Button>
             )}
-            {hasChatMap[sel.id] && (
-              <Badge badgeContent={unreadMap[sel.id] || 0} color="error">
-                <Button
-                  variant="outlined"
-                  startIcon={<ChatIcon />}
-                  onClick={() => { setSel(null); openChat(sel); }}
-                >
-                  Mensagens
-                </Button>
-              </Badge>
-            )}
-          </DialogActions>
-        </Dialog>
-      )}
-
-      {/* Dialog pedir novamente */}
-      {reorderPedido && (
-        <Dialog open onClose={() => setReorderPedido(null)} maxWidth="xs" fullWidth>
-          <DialogTitle>Pedir novamente</DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              {reorderPedido.nome}
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 2 }}>
-              Mesmo material e qualidade do pedido original. Altere a quantidade se necessário.
-            </Typography>
-            <Box display="flex" alignItems="center" gap={1}>
-              <IconButton
-                size="small"
-                onClick={() => setReorderQtd(q => Math.max(1, q - 1))}
-                disabled={reorderQtd <= 1}
+            <Badge badgeContent={unreadMap[sel.id] || 0} color="error">
+              <Button
+                variant="outlined"
+                startIcon={<ChatIcon />}
+                onClick={() => { setSel(null); openChat(sel); }}
               >
-                <RemoveIcon />
-              </IconButton>
-              <TextField
-                type="number"
-                value={reorderQtd}
-                onChange={e => setReorderQtd(Math.max(1, parseInt(e.target.value) || 1))}
-                inputProps={{ min: 1 }}
-                sx={{ width: 80 }}
-                size="small"
-                label="Quantidade"
-              />
-              <IconButton size="small" onClick={() => setReorderQtd(q => q + 1)}>
-                <AddIcon />
-              </IconButton>
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setReorderPedido(null)}>Cancelar</Button>
-            <Button
-              variant="contained"
-              onClick={handlePedirNovamente}
-              disabled={reordering}
-              startIcon={reordering ? <CircularProgress size={16} color="inherit" /> : <ReplayIcon />}
-            >
-              Confirmar pedido
-            </Button>
+                Mensagens
+              </Button>
+            </Badge>
           </DialogActions>
         </Dialog>
       )}

@@ -4,7 +4,10 @@ import {
   IconButton, Badge, Menu, MenuItem, Divider,
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Avatar, CircularProgress, Alert,
+  ToggleButton, ToggleButtonGroup, Tooltip,
 } from '@mui/material';
+import SchoolIcon from '@mui/icons-material/School';
+import EngineeringIcon from '@mui/icons-material/Engineering';
 import ChatIcon from '@mui/icons-material/Chat';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import { Outlet, useNavigate } from 'react-router-dom';
@@ -16,6 +19,7 @@ interface Usuario {
   id: number;
   nome: string;
   email: string;
+  nivel?: 'iniciante' | 'avancado';
 }
 
 export function ClientLayout() {
@@ -29,6 +33,7 @@ export function ClientLayout() {
   const [editOpen, setEditOpen]           = useState(false);
   const [editNome, setEditNome]           = useState('');
   const [editSenha, setEditSenha]         = useState('');
+  const [editNivel, setEditNivel]         = useState<'iniciante' | 'avancado'>('iniciante');
   const [editLoading, setEditLoading]     = useState(false);
   const [editError, setEditError]         = useState<string | null>(null);
   const [editSuccess, setEditSuccess]     = useState(false);
@@ -56,6 +61,7 @@ export function ClientLayout() {
     setAccountAnchor(null);
     setEditNome(usuario?.nome ?? '');
     setEditSenha('');
+    setEditNivel(usuario?.nivel ?? 'iniciante');
     setEditError(null);
     setEditSuccess(false);
     setEditOpen(true);
@@ -67,12 +73,17 @@ export function ClientLayout() {
     setEditError(null);
     setEditSuccess(false);
     try {
-      const body: any = { nome: editNome };
+      const body: any = { nome: editNome, nivel: editNivel };
       if (editSenha.trim()) body.senha = editSenha;
       await api.put(`/usuarios/${usuario.id}`, body);
-      setUsuario(u => u ? { ...u, nome: editNome } : u);
+      const nivelChanged = editNivel !== usuario.nivel;
+      setUsuario(u => u ? { ...u, nome: editNome, nivel: editNivel } : u);
       setEditSuccess(true);
       setEditSenha('');
+      if (nivelChanged) {
+        localStorage.setItem('user_nivel', editNivel);
+        setTimeout(() => window.location.reload(), 800);
+      }
     } catch (e: any) {
       setEditError(e.response?.data?.message ?? 'Erro ao salvar.');
     } finally {
@@ -161,6 +172,30 @@ export function ClientLayout() {
             onChange={e => setEditNome(e.target.value)}
             sx={{ mb: 2 }}
           />
+          <Box sx={{ mb: 2 }}>
+            <Box display="flex" alignItems="center" gap={0.5} mb={1}>
+              <Typography variant="subtitle2">Modo de visualização</Typography>
+              <Tooltip title="Iniciante: linguagem simplificada e campos técnicos ocultos. Avançado: todos os parâmetros de impressão visíveis." arrow>
+                <IconButton size="small" sx={{ p: 0.25 }}>
+                  <SchoolIcon fontSize="small" color="action" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+            <ToggleButtonGroup
+              value={editNivel}
+              exclusive
+              onChange={(_, v) => v && setEditNivel(v)}
+              size="small"
+              fullWidth
+            >
+              <ToggleButton value="iniciante">
+                <SchoolIcon fontSize="small" sx={{ mr: 0.5 }} /> Iniciante
+              </ToggleButton>
+              <ToggleButton value="avancado">
+                <EngineeringIcon fontSize="small" sx={{ mr: 0.5 }} /> Avançado
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
           <TextField
             label="Nova senha"
             type="password"

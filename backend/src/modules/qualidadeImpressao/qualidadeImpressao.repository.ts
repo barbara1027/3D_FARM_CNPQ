@@ -5,10 +5,7 @@ export interface QualidadeImpressao {
   nome: string;
   altura: number;
   espessura: number;
-  preenchimento: number;
   velocidade: number;
-  temperaturaBico: number;
-  temperaturaMesa: number;
   suporte: number;
   adesao: number;
   perimetros: number;
@@ -23,10 +20,7 @@ export interface CreateQualidadeImpressaoRepositoryDTO {
   nome?: string;
   altura: number;
   espessura: number;
-  preenchimento: number;
   velocidade: number;
-  temperaturaBico: number;
-  temperaturaMesa: number;
   suporte: number;
   adesao: number;
   perimetros?: number;
@@ -39,10 +33,7 @@ export interface UpdateQualidadeImpressaoRepositoryDTO {
   nome?: string;
   altura?: number;
   espessura?: number;
-  preenchimento?: number;
   velocidade?: number;
-  temperaturaBico?: number;
-  temperaturaMesa?: number;
   suporte?: number;
   adesao?: number;
   perimetros?: number;
@@ -53,9 +44,7 @@ export interface UpdateQualidadeImpressaoRepositoryDTO {
 
 const SELECT_Q = `
   SELECT
-    id, nome, altura, espessura, preenchimento, velocidade,
-    temperatura_bico AS temperaturaBico,
-    temperatura_mesa AS temperaturaMesa,
+    id, nome, altura, espessura, velocidade,
     suporte, adesao,
     perimetros,
     camadas_topo  AS camadasTopo,
@@ -81,14 +70,12 @@ export class QualidadeImpressaoRepository {
   async create(data: CreateQualidadeImpressaoRepositoryDTO): Promise<number> {
     const [result]: any = await db.execute(`
       INSERT INTO qualidades
-        (nome, altura, espessura, preenchimento, velocidade,
-         temperatura_bico, temperatura_mesa, suporte, adesao,
+        (nome, altura, espessura, velocidade, suporte, adesao,
          perimetros, camadas_topo, camadas_base, angulo_suporte)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       data.nome ?? "",
-      data.altura, data.espessura, data.preenchimento, data.velocidade,
-      data.temperaturaBico, data.temperaturaMesa, data.suporte, data.adesao,
+      data.altura, data.espessura, data.velocidade, data.suporte, data.adesao,
       data.perimetros ?? 2, data.camadasTopo ?? 3, data.camadasBase ?? 3, data.anguloSuporte ?? 45,
     ]);
     return result.insertId;
@@ -101,10 +88,7 @@ export class QualidadeImpressaoRepository {
     if (data.nome          !== undefined) { campos.push("nome = ?");           valores.push(data.nome); }
     if (data.altura        !== undefined) { campos.push("altura = ?");         valores.push(data.altura); }
     if (data.espessura     !== undefined) { campos.push("espessura = ?");      valores.push(data.espessura); }
-    if (data.preenchimento !== undefined) { campos.push("preenchimento = ?");  valores.push(data.preenchimento); }
     if (data.velocidade    !== undefined) { campos.push("velocidade = ?");     valores.push(data.velocidade); }
-    if (data.temperaturaBico !== undefined) { campos.push("temperatura_bico = ?"); valores.push(data.temperaturaBico); }
-    if (data.temperaturaMesa !== undefined) { campos.push("temperatura_mesa = ?"); valores.push(data.temperaturaMesa); }
     if (data.suporte       !== undefined) { campos.push("suporte = ?");        valores.push(data.suporte); }
     if (data.adesao        !== undefined) { campos.push("adesao = ?");         valores.push(data.adesao); }
     if (data.perimetros    !== undefined) { campos.push("perimetros = ?");     valores.push(data.perimetros); }

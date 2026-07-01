@@ -19,7 +19,7 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 | Frontend | React 18, TypeScript, rolldown-vite 7.1.14, MUI v7, React Router v7, Axios |
 | Banco | MySQL — banco: `3d_farm` |
 | Slicer | PrusaSlicer CLI (processo externo via `child_process.spawn`) |
-| Pagamento | Stripe — **ainda não implementado** |
+| Pagamento | Stripe — Checkout Session + Webhook implementados |
 
 ---
 
@@ -29,18 +29,28 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 3d-farm/
 ├── CLAUDE.md
 ├── backend/
-│   ├── migration_pipeline.sql        ← rodar ANTES de iniciar o backend
+│   ├── schema.sql                    ← schema base
+│   ├── migration_pipeline.sql        ← colunas do pipeline (obrigatória)
+│   ├── migration_nivel_usuario.sql   ← campo nivel na tabela usuarios
+│   ├── migration_scheduler_columns.sql ← colunas de ETA/fila nos pedidos
+│   ├── migration_temp_material_infill.sql
+│   ├── migration_parametros_avancados.sql
+│   ├── migration_arquivos_id_pedido.sql
 │   ├── .env
 │   ├── package.json
 │   ├── uploads/                      ← STLs enviados pelos clientes
 │   ├── gcode_storage/                ← G-codes gerados pelo slicer
 │   └── src/
 │       ├── server.ts                 ← entry point, porta 3333
-│       ├── app.ts                    ← Express: CORS, session, passport, statics
+│       ├── app.ts                    ← Express: CORS, session, passport, statics, Stripe webhook
+│       ├── scheduler.ts              ← cron diário de reescalonamento da fila
 │       ├── routes/index.ts           ← monta todos os routers
 │       ├── database/connection.ts    ← pool MySQL2
+│       ├── database/tables/          ← scripts de criação das tabelas (001–009)
 │       ├── seed.ts                   ← popula banco com dados de teste
 │       ├── middleware/auth.middleware.ts  ← authMiddleware + adminMiddleware
+│       ├── services/
+│       │   └── email.service.ts      ← nodemailer: revisão, falhou, concluído, impressora erro
 │       ├── types/
 │       │   ├── express.d.ts          ← augment Request com req.jwtUser
 │       │   └── external.d.ts
@@ -51,8 +61,25 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 │           ├── materiais/            ← CRUD
 │           ├── qualidadeImpressao/   ← CRUD (tabela: qualidades)
 │           ├── arquivos/             ← upload STL/gcode com Multer
-│           ├── pedidos/              ← CRUD + /gcode + /aprovar
+│           ├── pedidos/
+│           │   ├── pedidos.repository.ts
+│           │   ├── pedidos.service.ts
+│           │   ├── pedidos.controller.ts
+│           │   ├── pedidos.routes.ts      ← CRUD + chat + checkout + aprovar + reimprimir
+│           │   ├── pagamentos.service.ts  ← cria Stripe Checkout Session
+│           │   ├── stripe.controller.ts   ← webhook checkout.session.completed
+│           │   └── etaEntrega.service.ts  ← estimativa de prazo de entrega
+│           ├── fila/                 ← reescalonamento + otimização da fila
+│           │   ├── fila.service.ts
+│           │   ├── fila.controller.ts
+│           │   ├── fila.routes.ts
+│           │   └── filaOtimizacao.service.ts
 │           ├── impressoras/          ← CRUD + adapters OctoPrint/Moonraker/DUMMY
+│           │   └── comunicacao/
+│           │       ├── orquestrador.service.ts
+│           │       ├── octoprint.adapter.ts
+│           │       ├── moonraker.adapter.ts
+│           │       └── dummy.adapter.ts
 │           └── slicer/
 │               ├── auto-slice.service.ts   ← pipeline completo (orquestrador)
 │               ├── slicer.service.ts       ← roda PrusaSlicer CLI
@@ -73,7 +100,7 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
         │   ├── QualidadeImpressao.ts
         │   └── Impressora.ts
         ├── utils/
-        │   ├── normalize.ts          ← converte strings MySQL → Number
+        │   ├── normalize.ts          ← converte strings MySQL → Number (completo)
         │   └── translations.ts       ← StatusPedido → label + cor MUI
         ├── components/
         │   ├── ClientLayout.tsx      ← AppBar com nav cliente + Outlet
@@ -85,6 +112,7 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
         └── pages/
             ├── HomePage.tsx
             ├── LoginPage.tsx
+            ├── RegisterPage.tsx          ← cadastro de novos usuários
             ├── AuthCallbackPage.tsx      ← captura ?token=&tipo= do Google OAuth
             ├── DashboardPage.tsx         ← pedidos do cliente (abas por status)
             ├── QuotesPage.tsx            ← orçamentos pré-pagamento + polling 5s
@@ -129,21 +157,19 @@ npm run build        # tsc -b && vite build
 # 1. Criar banco
 mysql -u root -e "CREATE DATABASE IF NOT EXISTS 3d_farm;"
 
-# 2. Schema base (se existir)
+# 2. Schema base
 mysql -u root 3d_farm < backend/schema.sql
 
-# 3. Migration do pipeline — OBRIGATÓRIA
+# 3. Migrations — rodar em ordem
 mysql -u root 3d_farm < backend/migration_pipeline.sql
-```
+mysql -u root 3d_farm < backend/migration_nivel_usuario.sql
+mysql -u root 3d_farm < backend/migration_scheduler_columns.sql
+mysql -u root 3d_farm < backend/migration_temp_material_infill.sql
+mysql -u root 3d_farm < backend/migration_parametros_avancados.sql
+mysql -u root 3d_farm < backend/migration_arquivos_id_pedido.sql
 
-A `migration_pipeline.sql` adiciona:
-- ENUM `status` completo: `analisando`, `aguardando_pagamento`, `aguardando_revisao`, `na_fila`, `em_impressao`, `concluido`, `falhou`, `cancelado`
-- Colunas: `parametros` (JSON), `gcode_path`, `tempo_estimado_s`, `material_gramas`, `score_complexidade`, `motivo_complexidade`, `preco_base`, `taxa_complexidade`, `taxa_stripe`
-
-**Verificar se a migration foi aplicada:**
-```sql
-SHOW COLUMNS FROM pedidos LIKE 'score_complexidade';
--- Se não retornar nada → migration não foi aplicada ainda
+# 4. Tabelas auxiliares (se ainda não existirem)
+mysql -u root 3d_farm < backend/src/database/tables/009_create_chat_mensagens.sql
 ```
 
 ### Criar usuários e rodar seed
@@ -164,54 +190,65 @@ cd backend && npm run seed
 
 O seed cria: 5 materiais · 3 qualidades · 6 arquivos fictícios · 10 pedidos · 3 impressoras.
 
-> O seed insere pedidos com status antigos (`na_fila`, `em_impressao`, etc.) — não cobre `analisando`, `aguardando_pagamento` ou `aguardando_revisao`. Esses só aparecem em pedidos criados pelo fluxo real.
-
 ---
 
 ## Variáveis de ambiente (`backend/.env`)
 
+Todas as variáveis obrigatórias já estão configuradas. Referência:
+
 ```env
 PORT=3333
+
+# Banco
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=
 DB_NAME=3d_farm
 
-# JWT — TROCAR em produção (ainda é o placeholder no projeto atual)
-JWT_SECRET=troque_por_uma_chave_secreta_forte_aqui_minimo_32_chars
+# JWT e Sessão — já configurados com chaves aleatórias reais
+JWT_SECRET=<chave real>
 JWT_EXPIRES_IN=7d
-
-# Session — FALTANDO no .env atual, adicionar
-SESSION_SECRET=troque_aqui
+SESSION_SECRET=<chave real>
 
 # Upload
 UPLOAD_DIR=uploads
+GCODE_DIR=gcode_storage
 
-# Google OAuth
-# ⚠️ BUG: no .env atual está errado (porta 3000, rota /redirect)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_CALLBACK_URL=http://localhost:3333/auth/google/callback   # correto
-FRONTEND_URL=http://localhost:5173                                # faltando no .env atual
+# Google OAuth — já configurado corretamente
+GOOGLE_CLIENT_ID=<id>
+GOOGLE_CLIENT_SECRET=<secret>
+GOOGLE_CALLBACK_URL=http://localhost:3333/auth/google/callback
+FRONTEND_URL=http://localhost:5173
 
-# PrusaSlicer CLI
+# PrusaSlicer
 PRUSA_SLICER_PATH=/Applications/PrusaSlicer.app/Contents/MacOS/PrusaSlicer
 # Linux:   /usr/bin/prusa-slicer
 # Windows: C:\Program Files\Prusa3D\PrusaSlicer\prusa-slicer-console.exe
-GCODE_DIR=gcode_storage
 
 # Precificação
-BASE_HOURLY_RATE=15.00
-TAXA_BASE_PEDIDO=5.00
+BASE_HOURLY_RATE=8.00
+TAXA_BASE_PEDIDO=2.00
 STRIPE_FEE_PCT=0.0399
 STRIPE_FEE_FIXED=0.39
 
-# Stripe — ainda não implementado
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-STRIPE_SUCCESS_URL=http://localhost:5173/dashboard
-STRIPE_CANCEL_URL=http://localhost:5173/quotes
+# Email (nodemailer) — ⚠️ EMAIL_USER e EMAIL_PASS ainda vazios
+ADMIN_EMAIL=admin@3dfarm.com
+EMAIL_FROM=3D Farm <noreply@3dfarm.com>
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_SECURE=false
+EMAIL_USER=          # ← preencher com conta Gmail
+EMAIL_PASS=          # ← senha de app (myaccount.google.com/security)
+
+# Stripe — já configurado com chaves de teste
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_SUCCESS_URL=http://localhost:5173/dashboard?pagamento=sucesso
+STRIPE_CANCEL_URL=http://localhost:5173/quotes?pagamento=cancelado
+
+# Scheduler (opcional)
+CRON_REESCALONAMENTO=0 6 * * *   # padrão: todo dia às 6h
 ```
 
 ---
@@ -237,8 +274,10 @@ STRIPE_CANCEL_URL=http://localhost:5173/quotes
                                     taxaComplexidade, subtotal, taxaStripe, total
    f. UPDATE pedidos:
       score < 0.5  → status: aguardando_pagamento
+                     emailRevisaoPendente() para o admin
       score ≥ 0.5  → status: aguardando_revisao
       erro         → status: falhou
+                     emailPedidoFalhou() para o admin
 
 4. Frontend faz polling a cada 5s (QuotesPage) até status != "analisando"
 
@@ -246,18 +285,22 @@ STRIPE_CANCEL_URL=http://localhost:5173/quotes
                                 └─ aguardando_revisao → aguardando_pagamento
                                 └─ pode ajustar preço no body
 
-6. [TODO] Cliente paga          POST /pedidos/:id/checkout   ← NÃO EXISTE AINDA
-                                └─ criar Stripe Checkout Session
-                                └─ retornar { checkoutUrl }
+6. Cliente paga               POST /pedidos/:id/checkout
+                                └─ cria Stripe Checkout Session
+                                └─ retorna { checkoutUrl }
+                                └─ frontend redireciona para Stripe
 
-7. [TODO] Stripe confirma       POST /stripe/webhook          ← NÃO EXISTE AINDA
+7. Stripe confirma             POST /stripe/webhook
                                 └─ evento checkout.session.completed
+                                └─ verifica assinatura com STRIPE_WEBHOOK_SECRET
                                 └─ status: na_fila
 
-8. [TODO] Admin atribui         POST /impressoras/:id/atribuir-pedido ← NÃO EXISTE
+8. Admin atribui               POST /impressoras/:id/atribuir-pedido
                                 └─ status: em_impressao
+                                └─ orquestrador.startPrint() com o G-code
 
 9. Conclusão                    PUT /pedidos/:id { status: "concluido" }
+                                └─ emailClientePecaPronta() para o cliente
 ```
 
 ---
@@ -280,6 +323,36 @@ Lêem `localStorage` diretamente — **nunca via estado React** para evitar race
 
 ### AuthContext — regra crítica
 `login()` e `logout()` usam **`window.location.href`**, não `navigate()`. Garante reload completo com token já persistido no `localStorage`.
+
+---
+
+## Chat admin↔cliente
+
+O backend implementa um sistema de mensagens por pedido. **Não existe frontend ainda.**
+
+```
+GET  /pedidos/mensagens/conversas      ← lista conversas com preview (admin vê todas, cliente vê as suas)
+GET  /pedidos/mensagens/resumo         ← total de não lidas por pedido
+GET  /pedidos/:id/mensagens            ← histórico + marca do outro lado como lido
+GET  /pedidos/:id/mensagens/nao-lidas  ← contagem sem marcar lido
+POST /pedidos/:id/mensagens            ← envia mensagem { mensagem: string }
+```
+
+Tabela: `chat_mensagens` com campos `id_pedido`, `id_remetente`, `tipo_remetente` (admin|cliente), `mensagem`, `lido`.
+
+---
+
+## Fila de impressão
+
+Módulo desenvolvido por João (branch `fila-impressao-limpa`, commit `e1184da`).
+
+- `FilaService.reescalonarFilaVirtual()` — redistribui pedidos `na_fila` entre impressoras disponíveis
+- `FilaOtimizacaoService` — otimização avançada com ETA, buffer de segurança, prioridade
+- `EtaEntregaService` — calcula prazo estimado de entrega
+- `scheduler.ts` — cron diário às 6h (configurável por `CRON_REESCALONAMENTO`)
+- `POST /fila/reescalonar` — endpoint para acionar reescalonamento manualmente (admin)
+
+**Não existe frontend para gerenciamento da fila.**
 
 ---
 
@@ -333,6 +406,7 @@ O `NotificationsDrawer` no painel admin mostra automaticamente impressoras com `
 ## O que está implementado ✅
 
 - Auth email/senha + Google OAuth completo
+- Cadastro de novos usuários (RegisterPage)
 - CRUD completo: usuários, materiais, qualidades, arquivos, pedidos, impressoras
 - Upload STL com Multer
 - Pipeline automático: criação → PrusaSlicer → parser → score → preço → update banco
@@ -340,6 +414,12 @@ O `NotificationsDrawer` no painel admin mostra automaticamente impressoras com `
 - Precificação com breakdown completo (tempo + material + complexidade + Stripe embutido)
 - Aprovação de pedido complexo pelo admin com ajuste de preço opcional
 - Download de G-code
+- Stripe Checkout Session — `POST /pedidos/:id/checkout` → redireciona para Stripe
+- Stripe Webhook — `POST /stripe/webhook` → confirma pagamento e move para `na_fila`
+- Email notifications — revisão pendente, falhou, concluído, impressora com erro (nodemailer)
+- Chat admin↔cliente — backend completo (listar, enviar, marcar lido, contagem)
+- Fila de impressão — reescalonamento, otimização, ETA, scheduler diário
+- `atribuir-pedido` — vincula pedido a impressora e inicia impressão
 - Frontend cliente: NewOrderPage (3 passos), QuotesPage (polling + breakdown), DashboardPage
 - Frontend admin: Dashboard com KPIs reais, aba Revisão, CRUD de todos os módulos, NotificationsDrawer
 - Swagger UI em `/docs`
@@ -348,65 +428,20 @@ O `NotificationsDrawer` no painel admin mostra automaticamente impressoras com `
 
 ## O que falta implementar ❌
 
-**1. `POST /pedidos/:id/checkout`** — Stripe Checkout Session
-O botão "Pagar" na `QuotesPage` chama esta rota → 404 atualmente.
-- Criar sessão Stripe com `line_items` baseado no pedido
-- Salvar `stripe_session_id` no banco
-- Retornar `{ checkoutUrl }`
+**1. Frontend do Chat**
+O backend de chat está completo mas não existe nenhuma página ou componente no frontend. O cliente não consegue enviar mensagens ao admin, e o admin não consegue responder. Esta é a lacuna mais impactante para o usuário final.
 
-**2. `POST /stripe/webhook`** — confirmação de pagamento
-- Receber evento `checkout.session.completed`
-- Verificar assinatura com `STRIPE_WEBHOOK_SECRET`
-- Mudar status para `na_fila`
-- ⚠️ Requer `express.raw()` **antes** do `express.json()` para esta rota específica
+**2. Frontend de Gestão da Fila (admin)**
+A lógica de fila, otimização e scheduler do módulo `fila/` não tem interface. O admin não consegue ver a fila de pedidos aguardando impressão, reordenar prioridades nem acionar manualmente o reescalonamento pela UI.
 
-**3. `POST /impressoras/:id/atribuir-pedido`** — vincular pedido à impressora
-- Associar pedido `na_fila` a uma impressora disponível
-- Mudar status para `em_impressao`
-- Chamar `orquestrador.startPrint()` com o G-code
+**3. Email não configurado no `.env`**
+`EMAIL_USER` e `EMAIL_PASS` estão vazios. O código de email está pronto e chamado nos lugares certos — só falta a conta Gmail com "senha de app" ativa.
 
 ---
 
 ## Bugs conhecidos ⚠️
 
-**1. `GOOGLE_CALLBACK_URL` errado no `.env`**
-Atual: `http://127.0.0.1:3000/auth/google/redirect`
-Correto: `http://localhost:3333/auth/google/callback`
-Google OAuth não funciona até corrigir.
-
-**2. `FRONTEND_URL` ausente no `.env`**
-Usado em `auth.routes.ts` no redirect pós-OAuth. Adicionar: `FRONTEND_URL=http://localhost:5173`
-
-**3. `SESSION_SECRET` ausente no `.env`**
-Adicionar: `SESSION_SECRET=qualquer_string_longa_aleatoria`
-
-**4. `JWT_SECRET` ainda é o placeholder**
-`JWT_SECRET=troque_por_uma_chave_secreta_forte_aqui_minimo_32_chars` — trocar por string aleatória real.
-
-**5. `normalize.ts` incompleto — crash nas páginas admin**
-`normalizePedido()` não converte os campos decimais do slicer. Correção:
-
-```ts
-export function normalizePedido(p: any) {
-  return {
-    ...p,
-    preco:             Number(p.preco             ?? 0),
-    idUsuario:         Number(p.idUsuario          ?? 0),
-    idMaterial:        Number(p.idMaterial         ?? 0),
-    idQualidade:       Number(p.idQualidade        ?? 0),
-    idArquivo:         Number(p.idArquivo          ?? 0),
-    // FALTANDO — adicionar:
-    materialGramas:    p.materialGramas    != null ? Number(p.materialGramas)    : null,
-    scoreComplexidade: p.scoreComplexidade != null ? Number(p.scoreComplexidade) : null,
-    precoBase:         p.precoBase         != null ? Number(p.precoBase)         : null,
-    taxaComplexidade:  p.taxaComplexidade  != null ? Number(p.taxaComplexidade)  : null,
-    taxaStripe:        p.taxaStripe        != null ? Number(p.taxaStripe)        : null,
-    tempoEstimadoS:    p.tempoEstimadoS    != null ? Number(p.tempoEstimadoS)    : null,
-  };
-}
-```
-
-**6. Três componentes órfãos em `components/`**
+**1. Três componentes órfãos em `components/`**
 `ConfigStep.tsx`, `ConfirmationStep.tsx` e `UploadStep.tsx` não são importados por ninguém. Podem ser deletados.
 
 ---
@@ -429,7 +464,7 @@ Repository → Service → Controller → Routes → routes/index.ts
 - Novos status de pedido devem ser adicionados em **3 lugares simultaneamente**:
   1. `types/Pedido.ts` — tipo `StatusPedido`
   2. `utils/translations.ts` — label + cor MUI
-  3. `migration_pipeline.sql` — ENUM do MySQL
+  3. migration SQL — ENUM do MySQL
 
 ### Adicionando nova rota
 1. Método no repository (SQL)
@@ -444,55 +479,70 @@ Repository → Service → Controller → Routes → routes/index.ts
 
 ```
 # Auth
-POST   /auth/login                     { email, senha } → { token, tipo, usuario }
-GET    /auth/google                     inicia OAuth
-GET    /auth/google/callback            callback OAuth → redirect frontend
-GET    /auth/me                         dados do usuário logado (auth)
+POST   /auth/login                          { email, senha } → { token, tipo, usuario }
+GET    /auth/google                          inicia OAuth
+GET    /auth/google/callback                 callback OAuth → redirect frontend
+GET    /auth/me                              dados do usuário logado (auth)
 
 # Pedidos
-GET    /pedidos                         lista (admin=todos, cliente=seus)
-POST   /pedidos                         cria + dispara pipeline automático
+GET    /pedidos                             lista (admin=todos, cliente=seus)
+POST   /pedidos                             cria + dispara pipeline automático
 GET    /pedidos/:id
 PUT    /pedidos/:id
-DELETE /pedidos/:id                     (admin)
-GET    /pedidos/:id/gcode               download do G-code gerado
-POST   /pedidos/:id/aprovar             admin aprova revisão → aguardando_pagamento
-POST   /pedidos/:id/checkout            [TODO] Stripe Checkout Session
+DELETE /pedidos/:id                         (admin)
+GET    /pedidos/:id/gcode                   download do G-code gerado
+POST   /pedidos/:id/aprovar                 admin aprova revisão → aguardando_pagamento
+POST   /pedidos/:id/checkout                cria Stripe Checkout Session → { checkoutUrl }
+POST   /pedidos/:id/reimprimir              admin reenvia pedido para a fila (admin)
+
+# Chat (backend pronto, sem frontend)
+GET    /pedidos/mensagens/conversas         lista conversas com preview
+GET    /pedidos/mensagens/resumo            não lidas por pedido
+GET    /pedidos/:id/mensagens               histórico + marca como lido
+GET    /pedidos/:id/mensagens/nao-lidas     contagem sem marcar lido
+POST   /pedidos/:id/mensagens               envia mensagem { mensagem }
+
+# Stripe
+POST   /stripe/webhook                      evento checkout.session.completed
 
 # Materiais
 GET    /materiais
-POST   /materiais                       (admin)
-PUT    /materiais/:id                   (admin)
-DELETE /materiais/:id                   (admin)
+POST   /materiais                           (admin)
+PUT    /materiais/:id                       (admin)
+DELETE /materiais/:id                       (admin)
 
 # Qualidades
 GET    /qualidades
-POST   /qualidades                      (admin)
-PUT    /qualidades/:id                  (admin)
-DELETE /qualidades/:id                  (admin)
+POST   /qualidades                          (admin)
+PUT    /qualidades/:id                      (admin)
+DELETE /qualidades/:id                      (admin)
 
 # Arquivos
-POST   /arquivos/upload                 campo multipart: "arquivo"
+POST   /arquivos/upload                     campo multipart: "arquivo"
 GET    /arquivos
 GET    /arquivos/:id
 
 # Impressoras
 GET    /impressoras
-POST   /impressoras                     (admin)
-PUT    /impressoras/:id                 (admin)
-DELETE /impressoras/:id                 (admin)
+POST   /impressoras                         (admin)
+PUT    /impressoras/:id                     (admin)
+DELETE /impressoras/:id                     (admin)
 POST   /impressoras/:id/testar-conexao
 POST   /impressoras/:id/sincronizar
 POST   /impressoras/:id/liberar
+POST   /impressoras/:id/atribuir-pedido     vincula pedido + inicia impressão (admin)
+
+# Fila
+POST   /fila/reescalonar                    aciona reescalonamento manual (admin)
 
 # Usuários
-GET    /usuarios                        (admin)
-POST   /usuarios                        público — usado no setup inicial
+GET    /usuarios                            (admin)
+POST   /usuarios                            público — cadastro de novos usuários
 PUT    /usuarios/:id
-DELETE /usuarios/:id                    (admin)
+DELETE /usuarios/:id                        (admin)
 
 # Utilitários
-GET    /docs                            Swagger UI
-GET    /docs.json                       OpenAPI spec
-GET    /health                          { status: "ok" }
+GET    /docs                                Swagger UI
+GET    /docs.json                           OpenAPI spec
+GET    /health                              { status: "ok" }
 ```

@@ -10,8 +10,10 @@ export interface Material {
   diametro: number;
   tempBicoMin: number | null;
   tempBicoMax: number | null;
+  tempBicoRecomendada: number | null;
   tempMesaMin: number | null;
   tempMesaMax: number | null;
+  tempMesaRecomendada: number | null;
   fanMin: number | null;
   fanMax: number | null;
   camadaMin: number | null;

@@ -16,9 +16,18 @@ function createTransporter() {
 }
 
 async function send(subject: string, html: string): Promise<void> {
-  if (!ADMIN_EMAIL || !process.env.EMAIL_USER) return; // silently skip if not configured
+  if (!ADMIN_EMAIL || !process.env.EMAIL_USER) return;
   try {
     await createTransporter().sendMail({ from: FROM_EMAIL, to: ADMIN_EMAIL, subject, html });
+  } catch (err: any) {
+    console.error("[EMAIL] Falha ao enviar e-mail:", err.message);
+  }
+}
+
+async function sendTo(to: string, subject: string, html: string): Promise<void> {
+  if (!to || !process.env.EMAIL_USER) return;
+  try {
+    await createTransporter().sendMail({ from: FROM_EMAIL, to, subject, html });
   } catch (err: any) {
     console.error("[EMAIL] Falha ao enviar e-mail:", err.message);
   }
@@ -106,6 +115,26 @@ export async function emailPedidoConcluido(pedido: {
       row("Material usado",  pedido.materialGramas ? `${Number(pedido.materialGramas).toFixed(1)}g` : "—")
     )}`;
   await send(`[3D Farm] Pedido concluído: ${pedido.nome}`, baseTemplate("✅ Pedido concluído", "#4caf50", body));
+}
+
+export async function emailClientePecaPronta(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Sua peça <strong>${pedido.nome}</strong> foi concluída com sucesso e está pronta para retirada.</p>
+    <p>Entre em contato conosco para combinar a retirada da sua peça.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/dashboard"
+         style="background:#4caf50;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver Meus Pedidos
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Sua peça está pronta para retirada: ${pedido.nome}`,
+    baseTemplate("✅ Peça pronta para retirada!", "#4caf50", body),
+  );
 }
 
 export async function emailImpressoraErro(impressora: {

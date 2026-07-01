@@ -90,11 +90,12 @@ export class UsuarioController {
    */
   criar = async (req: Request, res: Response) => {
     try {
-      const { nome, email, senha } = req.body;
+      const { nome, email, senha, nivel } = req.body;
       if (!nome || !email || !senha) {
         return res.status(400).json({ message: "Os campos nome, email e senha são obrigatórios." });
       }
-      const usuario = await this.usuarioService.criar({ nome, email, senha, tipo: "cliente" });
+      const nivelValido = nivel === "avancado" ? "avancado" : "iniciante";
+      const usuario = await this.usuarioService.criar({ nome, email, senha, tipo: "cliente", nivel: nivelValido });
       return res.status(201).json(usuario);
     } catch (error: any) {
       const statusCode = error.message === "Já existe um usuário com este email." ? 400 : 500;
@@ -141,10 +142,11 @@ export class UsuarioController {
       }
 
       const { nome, email, senha } = req.body;
-      // Somente admins podem promover/rebaixar usuários
-      const tipo = isAdmin ? req.body.tipo : undefined;
+      // Somente admins podem promover/rebaixar o tipo; qualquer um pode mudar o próprio nivel
+      const tipo  = isAdmin ? req.body.tipo  : undefined;
+      const nivel = req.body.nivel === "avancado" || req.body.nivel === "iniciante" ? req.body.nivel : undefined;
 
-      const usuario = await this.usuarioService.atualizar(id, { nome, email, senha, tipo });
+      const usuario = await this.usuarioService.atualizar(id, { nome, email, senha, tipo, nivel });
       return res.status(200).json(usuario);
     } catch (error: any) {
       const statusCode =

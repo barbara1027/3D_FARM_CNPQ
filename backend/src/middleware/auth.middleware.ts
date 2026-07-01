@@ -5,6 +5,7 @@ export interface JwtPayload {
   sub: number;
   email: string;
   tipo: "admin" | "cliente";
+  nivel?: "iniciante" | "avancado";
   iat?: number;
   exp?: number;
 }

@@ -253,6 +253,28 @@ pedidosRoutes.post("/:id/mensagens", authMiddleware, async (req: Request, res: R
   return res.status(201).json(rows[0]);
 });
 
+/**
+ * POST /pedidos/:id/reimprimir — Admin reenvia pedido para a fila de impressão
+ */
+pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+    try {
+      await db.execute(
+        "UPDATE pedidos SET status = 'na_fila', updated_at = NOW() WHERE id = ?", [id]
+      );
+      const [rows]: any = await db.execute(
+        "SELECT id, status FROM pedidos WHERE id = ? LIMIT 1", [id]
+      );
+      if (!rows?.length) return res.status(404).json({ message: "Pedido não encontrado." });
+      return res.status(200).json(rows[0]);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  }
+);
+
 pedidosRoutes.post("/:id/checkout", authMiddleware, async (req: Request, res: Response) => {
   try {
     const pedidoId = Number(req.params.id);

@@ -1,6 +1,7 @@
 import { db } from "../../database/connection";
 
-export type UsuarioTipo = "admin" | "cliente";
+export type UsuarioTipo  = "admin" | "cliente";
+export type UsuarioNivel = "iniciante" | "avancado";
 
 export interface Usuario {
   id: number;
@@ -10,6 +11,7 @@ export interface Usuario {
   google_id: string | null;
   avatar_url: string | null;
   tipo: UsuarioTipo;
+  nivel: UsuarioNivel;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,6 +23,7 @@ export interface CreateUsuarioRepositoryDTO {
   googleId?: string | null;
   avatarUrl?: string | null;
   tipo: UsuarioTipo;
+  nivel?: UsuarioNivel;
 }
 
 export interface UpdateUsuarioRepositoryDTO {
@@ -30,11 +33,12 @@ export interface UpdateUsuarioRepositoryDTO {
   googleId?: string | null;
   avatarUrl?: string | null;
   tipo?: UsuarioTipo;
+  nivel?: UsuarioNivel;
 }
 
 const SELECT = `
   SELECT
-    id, nome, email, senha_hash, google_id, avatar_url, tipo,
+    id, nome, email, senha_hash, google_id, avatar_url, tipo, nivel,
     DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS createdAt,
     DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updatedAt
   FROM usuarios
@@ -63,14 +67,15 @@ export class UsuarioRepository {
 
   async create(data: CreateUsuarioRepositoryDTO): Promise<number> {
     const [result]: any = await db.execute(`
-      INSERT INTO usuarios (nome, email, senha_hash, google_id, avatar_url, tipo)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO usuarios (nome, email, senha_hash, google_id, avatar_url, tipo, nivel)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
       data.nome, data.email,
       data.senhaHash ?? null,
       data.googleId ?? null,
       data.avatarUrl ?? null,
       data.tipo,
+      data.nivel ?? "iniciante",
     ]);
     return result.insertId;
   }
@@ -84,7 +89,8 @@ export class UsuarioRepository {
     if (data.senhaHash !== undefined) { campos.push("senha_hash = ?"); valores.push(data.senhaHash); }
     if (data.googleId !== undefined) { campos.push("google_id = ?"); valores.push(data.googleId); }
     if (data.avatarUrl !== undefined) { campos.push("avatar_url = ?"); valores.push(data.avatarUrl); }
-    if (data.tipo !== undefined) { campos.push("tipo = ?"); valores.push(data.tipo); }
+    if (data.tipo  !== undefined) { campos.push("tipo = ?");  valores.push(data.tipo); }
+    if (data.nivel !== undefined) { campos.push("nivel = ?"); valores.push(data.nivel); }
 
     if (campos.length === 0) return;
     valores.push(id);

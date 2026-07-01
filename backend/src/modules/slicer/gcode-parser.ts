@@ -7,30 +7,72 @@ export interface GcodeMetrics {
   materialGrams:  number;
 
   // Fatores de complexidade brutos
-  supportRatio:       number;  // 0-1  proporção de material de suporte
-  externalPerimRatio: number;  // 0-1  proporção de perímetro externo
-  retractionCount:    number;  // número absoluto de retrações
-  shortSegmentCount:  number;  // movimentos < 1mm (fragmentação)
-  islandCount:        number;  // ilhas de perímetro (geometria fragmentada)
+  supportRatio:       number;  // 0-1  proporção de extrusão de suporte vs total
+  externalPerimRatio: number;  // 0-1  proporção de perímetro externo vs total
+  retractionCount:    number;  // número de retrações
+  shortSegmentCount:  number;  // movimentos de extrusão < 1mm
+  islandCount:        number;  // transições para ;TYPE:External perimeter (ilhas distintas)
   layerChanges:       number;  // total de mudanças de camada
 }
 
 /**
- * Lê o G-code gerado pelo PrusaSlicer via streaming linha a linha e extrai
- * métricas para cálculo do score de complexidade e precificação.
- * Evita carregar o arquivo inteiro em memória (arquivos podem ter centenas de MB).
+ * Densidades típicas por tipo de material (g/cm³).
+ * Usadas para converter volume [cm³] do G-code em gramas quando
+ * PrusaSlicer não recebeu --filament-density.
  */
-export async function parseGcode(gcodePath: string): Promise<GcodeMetrics> {
+const DENSITY_BY_TYPE: Record<string, number> = {
+  PLA:    1.24,
+  PETG:   1.27,
+  ABS:    1.04,
+  ASA:    1.07,
+  TPU:    1.21,
+  NYLON:  1.13,
+  PA:     1.13,
+  PC:     1.20,
+  RESINA: 1.12,
+  RESIN:  1.12,
+};
+
+export function densityForMaterial(tipo: string): number {
+  const key = tipo.toUpperCase().split(/[\s_-]/)[0];
+  return DENSITY_BY_TYPE[key] ?? 1.24;
+}
+
+/**
+ * Lê o G-code gerado pelo PrusaSlicer 2.x via streaming e extrai métricas.
+ *
+ * Estratégia para métricas baseadas em volume (supportRatio, externalPerimRatio):
+ *   Rastreia seções ;TYPE: e acumula avanço de E por tipo de movimento.
+ *   Ratio = E no tipo / E total.
+ *
+ * Estratégia para retrações:
+ *   PrusaSlicer marca retrações com "; retract" inline — mais confiável que
+ *   detectar E negativo em modo absoluto (M82).
+ *
+ * Estratégia para islandCount:
+ *   Conta transições para ;TYPE:External perimeter — cada ilha distinta
+ *   requer uma nova seção de perímetro externo após travel/retração.
+ */
+export async function parseGcode(
+  gcodePath: string,
+  filamentDensity = 1.24,
+): Promise<GcodeMetrics> {
   let timeSeconds = 0;
   let timeFound   = false;
-  let materialGrams      = 0;
-  let supportRatio       = 0;
-  let externalPerimRatio = 0;
+  let volumeCm3   = 0;
+
+  let currentType  = "";
+  let isAbsoluteE  = true;
+  let curE         = 0;
+  let totalE       = 0;   // E acumulado total (apenas extrusão real)
+  let supportE     = 0;   // E em seções de suporte
+  let externalE    = 0;   // E em seções de perímetro externo
+
   let retractionCount   = 0;
   let shortSegmentCount = 0;
   let islandCount       = 0;
   let layerChanges      = 0;
-  let inPerimeter       = false;
+
   let curX = 0, curY = 0, curZ = 0;
 
   await new Promise<void>((resolve, reject) => {
@@ -40,63 +82,89 @@ export async function parseGcode(gcodePath: string): Promise<GcodeMetrics> {
     });
 
     rl.on("line", (line) => {
-      const trimmed = line.trim();
+      const t = line.trim();
 
-      // Tempo estimado: "; estimated printing time (normal mode) = 1h 23m 45s"
+      // ── Estatísticas do cabeçalho ─────────────────────────────
       if (!timeFound) {
-        const timeMatch = trimmed.match(
-          /^; estimated printing time.*?=\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(\d+)s/
+        const m = t.match(
+          /^; estimated printing time.*?=\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(\d+)s/,
         );
-        if (timeMatch) {
+        if (m) {
           timeSeconds =
-            (parseInt(timeMatch[1] ?? "0", 10) * 3600) +
-            (parseInt(timeMatch[2] ?? "0", 10) * 60)   +
-             parseInt(timeMatch[3] ?? "0", 10);
+            (parseInt(m[1] ?? "0") * 3600) +
+            (parseInt(m[2] ?? "0") * 60)   +
+             parseInt(m[3] ?? "0");
           timeFound = true;
         }
       }
 
-      // Gramas de filamento
-      const gramMatch = trimmed.match(/^; total filament used \[g\]\s*=\s*([\d.]+)/i);
-      if (gramMatch) materialGrams = parseFloat(gramMatch[1]);
+      // Volume de filamento: PrusaSlicer sempre gera isso independente da densidade
+      const cm3m = t.match(/^; filament used \[cm3\]\s*=\s*([\d.]+)/i);
+      if (cm3m) { volumeCm3 = parseFloat(cm3m[1]); return; }
 
-      // Suporte e perímetro externo (% do volume total)
-      const supportMatch = trimmed.match(/^; support material\s*=\s*([\d.]+)%/i);
-      if (supportMatch) supportRatio = parseFloat(supportMatch[1]) / 100;
+      // ── Modo de extrusão ──────────────────────────────────────
+      if (t === "M82") { isAbsoluteE = true;  return; }
+      if (t === "M83") { isAbsoluteE = false; return; }
 
-      const perimMatch = trimmed.match(/^; external perimeters\s*=\s*([\d.]+)%/i);
-      if (perimMatch) externalPerimRatio = parseFloat(perimMatch[1]) / 100;
+      // Reset de E (G92 E0 ou G92 Exx)
+      const g92 = t.match(/^G92\s[^;]*?E([\d.]+)/);
+      if (g92) { curE = parseFloat(g92[1]); return; }
 
-      // Mudanças de camada
-      if (trimmed.startsWith(";LAYER_CHANGE") || /^;Z:\d/.test(trimmed)) {
+      // ── Marcadores de seção ───────────────────────────────────
+      if (t.startsWith(";TYPE:")) {
+        currentType = t.slice(6);
+        if (currentType === "External perimeter") islandCount++;
+        return;
+      }
+
+      // ── Mudanças de camada ────────────────────────────────────
+      if (t.startsWith(";LAYER_CHANGE") || /^;Z:\d/.test(t)) {
         layerChanges++;
+        return;
       }
 
-      // Retrações: G1 com E negativo > 0.1mm
-      const retract = trimmed.match(/^G1\s.*?E(-[\d.]+)/);
-      if (retract && parseFloat(retract[1]) < -0.1) {
+      // ── Retrações: detecta pelo comentário "; retract" ────────
+      // PrusaSlicer em modo E absoluto (M82) usa este comentário em retrações.
+      if (t.includes("; retract") && !t.includes("; unretract")) {
         retractionCount++;
-        inPerimeter = false;
       }
 
-      // Ilhas de perímetro
-      if (trimmed.includes("; perimeter") || trimmed.includes("; external perimeter")) {
-        if (!inPerimeter) { islandCount++; inPerimeter = true; }
-      }
-
-      // Segmentos curtos (extrusão de distância < 1mm)
-      const move = trimmed.match(
-        /^(G0|G1)(?:\s.*?X([-\d.]+))?(?:\s.*?Y([-\d.]+))?(?:\s.*?Z([-\d.]+))?/
+      // ── Movimentos G0/G1 ──────────────────────────────────────
+      const mv = t.match(
+        /^(G0|G1)(?:\s[^;]*?X([-\d.]+))?(?:\s[^;]*?Y([-\d.]+))?(?:\s[^;]*?Z([-\d.]+))?(?:\s[^;]*?E([-\d.]+))?/,
       );
-      if (move) {
-        const nx = move[2] ? parseFloat(move[2]) : curX;
-        const ny = move[3] ? parseFloat(move[3]) : curY;
-        const nz = move[4] ? parseFloat(move[4]) : curZ;
-        const d  = Math.sqrt((nx - curX) ** 2 + (ny - curY) ** 2 + (nz - curZ) ** 2);
-        if (d > 0 && d < 1.0) shortSegmentCount++;
-        if (move[1] === "G0") inPerimeter = false;
-        curX = nx; curY = ny; curZ = nz;
+      if (!mv) return;
+
+      const nx = mv[2] != null ? parseFloat(mv[2]) : curX;
+      const ny = mv[3] != null ? parseFloat(mv[3]) : curY;
+      const nz = mv[4] != null ? parseFloat(mv[4]) : curZ;
+
+      const isRetractLine = t.includes("; retract") || t.includes("; unretract");
+
+      if (mv[5] != null) {
+        const newE = parseFloat(mv[5]);
+        const dE   = isAbsoluteE ? newE - curE : newE;
+        curE       = isAbsoluteE ? newE : curE + newE;
+
+        // Conta apenas extrusão real (dE positivo, sem linhas de retract/unretract)
+        if (!isRetractLine && dE > 0.001) {
+          totalE += dE;
+          if (currentType === "Support" || currentType === "Support interface") {
+            supportE += dE;
+          }
+          if (currentType === "External perimeter") {
+            externalE += dE;
+          }
+        }
       }
+
+      // Segmentos curtos: apenas G1 com extrusão real e distância < 1mm
+      if (mv[1] === "G1" && !isRetractLine && mv[5] != null) {
+        const dist = Math.sqrt((nx - curX) ** 2 + (ny - curY) ** 2 + (nz - curZ) ** 2);
+        if (dist > 0 && dist < 1.0) shortSegmentCount++;
+      }
+
+      curX = nx; curY = ny; curZ = nz;
     });
 
     rl.on("close", resolve);
@@ -107,9 +175,9 @@ export async function parseGcode(gcodePath: string): Promise<GcodeMetrics> {
 
   return {
     timeSeconds,
-    materialGrams,
-    supportRatio,
-    externalPerimRatio,
+    materialGrams:      Math.round(volumeCm3 * filamentDensity * 100) / 100,
+    supportRatio:       totalE > 0 ? supportE       / totalE : 0,
+    externalPerimRatio: totalE > 0 ? externalE      / totalE : 0,
     retractionCount,
     shortSegmentCount,
     islandCount,

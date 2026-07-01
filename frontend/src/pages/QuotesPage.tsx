@@ -13,6 +13,7 @@ import api from '../services/api';
 import type { Pedido } from '../types/Pedido';
 import { getStatusTranslation, getStatusColor } from '../utils/translations';
 import { normalizePedido } from '../utils/normalize';
+import { useAuth } from '../context/AuthContext';
 
 function formatTime(s: number | null): string {
   if (!s) return '—';
@@ -26,6 +27,7 @@ function n(v: number | null | undefined): number {
 }
 
 export function QuotesPage() {
+  const { nivel } = useAuth();
   const [pedidos, setPedidos]       = useState<Pedido[]>([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState<string | null>(null);
@@ -123,18 +125,9 @@ export function QuotesPage() {
             <Typography variant="h4" color="primary" fontWeight={800}>
               R$ {p.preco.toFixed(2)}
             </Typography>
-            <Box display="flex" gap={3} mt={1} flexWrap="wrap">
-              {p.tempoEstimadoS && (
-                <Typography variant="body2" color="text.secondary">
-                  ⏱ {formatTime(p.tempoEstimadoS)}
-                </Typography>
-              )}
-              {p.materialGramas && (
-                <Typography variant="body2" color="text.secondary">
-                  🧵 {n(p.materialGramas).toFixed(1)}g de filamento
-                </Typography>
-              )}
-            </Box>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+              Prazo de entrega calculado ao entrar na fila, após o pagamento.
+            </Typography>
           </Box>
         )}
 
@@ -254,25 +247,42 @@ export function QuotesPage() {
                   <ListItemText primary="Tempo estimado de impressão" secondary={formatTime(sel.tempoEstimadoS)} />
                 </ListItem>
               )}
-              {sel.materialGramas && (
+              {(sel.materialGramas ?? 0) > 0 && (
                 <ListItem>
-                  <ListItemText primary="Material estimado" secondary={`${n(sel.materialGramas).toFixed(2)} gramas`} />
+                  <ListItemText primary="Filamento estimado" secondary={`${n(sel.materialGramas).toFixed(1)}g`} />
                 </ListItem>
               )}
 
               {sel.preco > 0 && sel.status === 'aguardando_pagamento' && (
                 <>
                   <Divider component="li" />
-                  <ListItem>
-                    <ListItemText primary="Custo de impressão" secondary={`R$ ${n(sel.precoBase).toFixed(2)}`} />
-                  </ListItem>
-                  {n(sel.taxaComplexidade) > 0 && (
+                  {nivel === 'avancado' && sel.scoreComplexidade != null && (
                     <ListItem>
-                      <ListItemText primary="Taxa de complexidade" secondary={`R$ ${n(sel.taxaComplexidade).toFixed(2)}`} />
+                      <ListItemText
+                        primary="Complexidade da peça"
+                        secondary={`Score ${(Number(sel.scoreComplexidade) * 100).toFixed(0)}/100 · ${Number(sel.scoreComplexidade) >= 0.5 ? 'complexa (revisada pelo admin)' : 'dentro do padrão'}`}
+                      />
                     </ListItem>
                   )}
                   <ListItem>
-                    <ListItemText primary="Taxa de pagamento" secondary={`R$ ${n(sel.taxaStripe).toFixed(2)}`} />
+                    <ListItemText
+                      primary={nivel === 'iniciante' ? 'Impressão, material e serviço' : 'Impressão + material + serviço'}
+                      secondary={`R$ ${(n(sel.precoBase) - n(sel.taxaComplexidade)).toFixed(2)}`}
+                    />
+                  </ListItem>
+                  {n(sel.taxaComplexidade) > 0 && (
+                    <ListItem>
+                      <ListItemText
+                        primary={nivel === 'iniciante' ? 'Ajuste por peça complexa' : 'Sobretaxa por peça complexa'}
+                        secondary={`R$ ${n(sel.taxaComplexidade).toFixed(2)}`}
+                      />
+                    </ListItem>
+                  )}
+                  <ListItem>
+                    <ListItemText
+                      primary={nivel === 'iniciante' ? 'Taxa do pagamento' : 'Taxa de pagamento online'}
+                      secondary={`R$ ${n(sel.taxaStripe).toFixed(2)}`}
+                    />
                   </ListItem>
                   <Divider component="li" />
                   <ListItem>

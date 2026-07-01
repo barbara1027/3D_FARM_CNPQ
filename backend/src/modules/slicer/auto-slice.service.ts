@@ -3,9 +3,9 @@ import fs   from "fs/promises";
 import { db } from "../../database/connection";
 import { ArquivoRepository } from "../arquivos/arquivos.repository";
 import { runPrusaSlicer, gcodeOutputPath } from "./slicer.service";
-import { parseGcode } from "./gcode-parser";
+import { parseGcode, densityForMaterial } from "./gcode-parser";
 import { scoreComplexity } from "./complexity-scorer";
-import { calculatePrice } from "./price-calculator";
+import { calculatePrice, applyStripeFee } from "./price-calculator";
 import { emailRevisaoPendente, emailPedidoFalhou } from "../../services/email.service";
 
 /**
@@ -47,17 +47,23 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
         a.caminho          AS stlPath,
         a.tipo             AS arquivoTipo,
         m.preco            AS pricePerGram,
-        m.diametro         AS mDiametro,
-        m.fan_min          AS mFanMin,
-        m.fan_max          AS mFanMax,
-        m.temp_bico_min    AS mTempBicoMin,
-        m.temp_bico_max    AS mTempBicoMax,
-        m.temp_mesa_min    AS mTempMesaMin,
-        m.temp_mesa_max    AS mTempMesaMax,
+        m.tipo             AS mTipo,
+        m.diametro              AS mDiametro,
+        m.fan_min               AS mFanMin,
+        m.fan_max               AS mFanMax,
+        m.temp_bico_min         AS mTempBicoMin,
+        m.temp_bico_max         AS mTempBicoMax,
+        m.temp_bico_recomendada AS mTempBicoRec,
+        m.temp_mesa_min         AS mTempMesaMin,
+        m.temp_mesa_max         AS mTempMesaMax,
+        m.temp_mesa_recomendada AS mTempMesaRec,
+        u.tipo             AS usuarioTipo,
         q.perimetros       AS qPerimetros,
         q.camadas_topo     AS qCamadasTopo,
         q.camadas_base     AS qCamadasBase,
-        q.angulo_suporte   AS qAnguloSuporte
+        q.angulo_suporte   AS qAnguloSuporte,
+        q.suporte          AS qSuport,
+        q.adesao           AS qAdesao
       FROM pedidos p
       JOIN arquivos  a ON a.id = p.id_arquivo
       JOIN materiais m ON m.id = p.id_material
@@ -87,21 +93,33 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       ? (typeof row.parametros === "string" ? JSON.parse(row.parametros) : row.parametros)
       : {};
 
-    // Temperatura padrão do material = ponto médio do range
-    const tempBicoDefault = row.mTempBicoMin && row.mTempBicoMax
-      ? String(Math.round((Number(row.mTempBicoMin) + Number(row.mTempBicoMax)) / 2))
-      : "";
-    const tempMesaDefault = row.mTempMesaMin && row.mTempMesaMax
-      ? String(Math.round((Number(row.mTempMesaMin) + Number(row.mTempMesaMax)) / 2))
-      : "";
+    // Temperatura padrão do material: usa recomendada se disponível, senão ponto médio do range
+    const tempBicoDefault = row.mTempBicoRec
+      ? String(Number(row.mTempBicoRec))
+      : (row.mTempBicoMin && row.mTempBicoMax
+          ? String(Math.round((Number(row.mTempBicoMin) + Number(row.mTempBicoMax)) / 2))
+          : "");
+    const tempMesaDefault = row.mTempMesaRec
+      ? String(Number(row.mTempMesaRec))
+      : (row.mTempMesaMin && row.mTempMesaMax
+          ? String(Math.round((Number(row.mTempMesaMin) + Number(row.mTempMesaMax)) / 2))
+          : "");
 
     // Merge: parâmetros do usuário > defaults da qualidade/material no banco
+    // Para supports/adhesion: valor explícito do usuário tem prioridade;
+    // se não foi modificado ("none"), usa o preset da qualidade como fallback.
     const sliceParams = {
       ...userParams,
       perimeters:       userParams.perimeters       ?? String(row.qPerimetros    ?? 2),
       topLayers:        userParams.topLayers        ?? String(row.qCamadasTopo   ?? 3),
       bottomLayers:     userParams.bottomLayers     ?? String(row.qCamadasBase   ?? 3),
       supportAngle:     userParams.supportAngle     ?? String(row.qAnguloSuporte ?? 45),
+      supports: userParams.supports && userParams.supports !== "none"
+        ? userParams.supports
+        : "touching_buildplate",
+      adhesion: userParams.adhesion && userParams.adhesion !== "none"
+        ? userParams.adhesion
+        : (Number(row.qAdesao) ? "brim" : "none"),
       fanMin:           userParams.fanMin           ?? (row.mFanMin != null ? String(row.mFanMin) : ""),
       fanMax:           userParams.fanMax           ?? (row.mFanMax != null ? String(row.mFanMax) : ""),
       filamentDiameter: userParams.filamentDiameter ?? (row.mDiametro ? String(row.mDiametro) : ""),
@@ -118,7 +136,8 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
     const arquivoRepo = new ArquivoRepository();
     await arquivoRepo.upsertGcode(pedidoId, gcodePath, gcodeStats.size / 1_000_000);
 
-    const metrics = await parseGcode(gcodePath);
+    const filamentDensity = densityForMaterial(row.mTipo ?? "PLA");
+    const metrics = await parseGcode(gcodePath, filamentDensity);
     console.log(
       `[AUTO-SLICE] Métricas: ${metrics.timeSeconds}s, ` +
       `${metrics.materialGrams.toFixed(2)}g, ` +
@@ -134,26 +153,26 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
 
     const quantidade   = Math.max(1, Number(row.quantidade) || 1);
     const pricePerGram = parseFloat(row.pricePerGram) || 0.12;
-    const pricing      = calculatePrice(metrics, pricePerGram, complexity.score);
+    const pricing      = calculatePrice(metrics, pricePerGram, complexity.score, complexity.isComplex);
 
-    // Multiplica pelo número de cópias
-    const totalPreco           = pricing.total          * quantidade;
-    const totalSubtotal        = pricing.subtotal       * quantidade;
+    // Escala subtotal pela quantidade e aplica Stripe UMA VEZ sobre o total do pedido
+    const totalSubtotal        = pricing.subtotal         * quantidade;
     const totalTaxaComplexidade = pricing.taxaComplexidade * quantidade;
-    const totalTaxaStripe      = pricing.taxaStripe     * quantidade;
-    const totalTempoS          = metrics.timeSeconds    * quantidade;
-    const totalGramas          = metrics.materialGrams  * quantidade;
+    const { total: totalPreco, taxaStripe: totalTaxaStripe } = applyStripeFee(totalSubtotal);
+    const totalTempoS          = metrics.timeSeconds       * quantidade;
+    const totalGramas          = metrics.materialGrams     * quantidade;
 
     console.log(
       `[AUTO-SLICE] Preço: R$${totalPreco.toFixed(2)} ` +
-      `(${quantidade}× R$${pricing.total.toFixed(2)}, base R$${totalSubtotal.toFixed(2)} + Stripe R$${totalTaxaStripe.toFixed(2)})`
+      `(${quantidade}× R$${pricing.subtotal.toFixed(2)}, base R$${totalSubtotal.toFixed(2)} + Stripe R$${totalTaxaStripe.toFixed(2)})`
     );
 
+    // Pedido criado por admin → vai direto para a fila (sem pagamento e sem revisão)
     // Peça não complexa (score < 0.5) → aguardando_pagamento
     // Peça complexa  (score >= 0.5) → aguardando_revisao (admin vê e pode ajustar preço)
-    const novoStatus = complexity.isComplex
-      ? "aguardando_revisao"
-      : "aguardando_pagamento";
+    const novoStatus = row.usuarioTipo === "admin"
+      ? "na_fila"
+      : (complexity.isComplex ? "aguardando_revisao" : "aguardando_pagamento");
 
     await db.execute(`
       UPDATE pedidos SET
@@ -188,7 +207,7 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       `R$${totalPreco.toFixed(2)}`
     );
 
-    if (complexity.isComplex) {
+    if (complexity.isComplex && novoStatus === "aguardando_revisao") {
       await emailRevisaoPendente({
         id: pedidoId,
         nome: row.pedidoNome,

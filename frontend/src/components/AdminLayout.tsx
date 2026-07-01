@@ -12,9 +12,12 @@ import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import CategoryIcon from '@mui/icons-material/Category';
 import TuneIcon from '@mui/icons-material/Tune';
-import React, { useEffect, useState } from 'react';
+import ChatIcon from '@mui/icons-material/Chat';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { NotificationsDrawer } from './NotificationsDrawer';
+import { ChatInboxDrawer } from './ChatInboxDrawer';
 import api from '../services/api';
 import type { Pedido } from '../types/Pedido';
 import type { Impressora } from '../types/Impressora';
@@ -27,8 +30,10 @@ export function AdminLayout() {
   const [naFilaCount, setNaFilaCount] = useState(0);
   const [erroCount, setErroCount] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
 
-  const fetchCounts = async () => {
+  const fetchCounts = useCallback(async () => {
     try {
       const [pedidosRes, impressorasRes] = await Promise.all([
         api.get<Pedido[]>('/pedidos'),
@@ -36,16 +41,22 @@ export function AdminLayout() {
       ]);
       setNaFilaCount(pedidosRes.data.filter((p) => p.status === 'na_fila').length);
       setErroCount(impressorasRes.data.filter((i) => i.status === 'Erro').length);
-    } catch {
-      // silencioso — não bloquear a UI
-    }
-  };
+    } catch { /* silencioso */ }
+  }, []);
+
+  const fetchChatUnread = useCallback(async () => {
+    try {
+      const { data } = await api.get<{ idPedido: number; count: number }[]>('/pedidos/mensagens/resumo');
+      setChatUnread(data.reduce((acc, x) => acc + x.count, 0));
+    } catch { /* silencioso */ }
+  }, []);
 
   useEffect(() => {
     fetchCounts();
-    const interval = setInterval(fetchCounts, 15000);
+    fetchChatUnread();
+    const interval = setInterval(() => { fetchCounts(); fetchChatUnread(); }, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchCounts, fetchChatUnread]);
 
   const totalAlerts = naFilaCount + erroCount;
 
@@ -67,11 +78,25 @@ export function AdminLayout() {
           <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>
             Painel 3D Farm
           </Typography>
-          <IconButton color="inherit" onClick={() => setDrawerOpen(true)}>
-            <Badge badgeContent={totalAlerts} color="error">
-              <NotificationsIcon />
-            </Badge>
-          </IconButton>
+          <Tooltip title="Novo Pedido">
+            <IconButton color="inherit" onClick={() => navigate('/admin/new-order')}>
+              <AddCircleOutlineIcon />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Mensagens">
+            <IconButton color="inherit" onClick={() => { setChatOpen(true); setChatUnread(0); }}>
+              <Badge badgeContent={chatUnread > 0 ? chatUnread : undefined} color="error" max={99}>
+                <ChatIcon />
+              </Badge>
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Notificações">
+            <IconButton color="inherit" onClick={() => setDrawerOpen(true)}>
+              <Badge badgeContent={totalAlerts} color="error">
+                <NotificationsIcon />
+              </Badge>
+            </IconButton>
+          </Tooltip>
         </Toolbar>
       </AppBar>
 
@@ -130,6 +155,12 @@ export function AdminLayout() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         totalAlerts={totalAlerts}
+      />
+
+      <ChatInboxDrawer
+        meuTipo="admin"
+        open={chatOpen}
+        onClose={() => { setChatOpen(false); fetchChatUnread(); }}
       />
     </Box>
   );
