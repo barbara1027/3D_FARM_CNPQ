@@ -364,8 +364,8 @@ Score 0.0–1.0. Limiar: **score ≥ 0.5 = complexo**.
 |---|---|---|---|
 | Suporte | 0.25 | qualquer % | 30% |
 | Ilhas geométricas | 0.20 | 20 ilhas | 200 ilhas |
-| Retrações | 0.15 | 200 | 1000 |
-| Segmentos curtos (<1mm) | 0.15 | 500 | 3000 |
+| Retrações | 0.15 | 500 | 4500 |
+| Segmentos curtos (<1mm) | 0.15 | 1000 | 28000 |
 | Duração longa | 0.15 | 2h | 18h |
 | Perímetro externo | 0.10 | 25% | 60% |
 
@@ -379,7 +379,7 @@ Cada fator contribui linearmente entre os dois extremos. Total máximo = 1.0.
 custoTempo       = (timeSeconds / 3600) × BASE_HOURLY_RATE
 custoMaterial    = materialGrams × pricePerGram   (campo preco da tabela materiais)
 taxaBase         = TAXA_BASE_PEDIDO               (fixo por pedido)
-taxaComplexidade = (custoTempo + custoMaterial + taxaBase) × score × 0.60
+taxaComplexidade = (custoTempo + custoMaterial) × score × 0.60   — SOMENTE se score ≥ 0.5
 subtotal         = custoTempo + custoMaterial + taxaBase + taxaComplexidade
 taxaStripe       = (subtotal + STRIPE_FEE_FIXED) / (1 - STRIPE_FEE_PCT) - subtotal
 total            = subtotal + taxaStripe

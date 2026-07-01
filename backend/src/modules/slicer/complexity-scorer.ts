@@ -67,9 +67,11 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     });
   }
 
-  // Referência: 200 = normal, 1000 = crítico
-  if (m.retractionCount > 200) {
-    const contrib = Math.min((m.retractionCount - 200) / 800, 1.0) * 0.15;
+  // Referência calibrada com peças reais: peça trivial (cubo) fica em ~300,
+  // peças médias em ~1500-2000, peças complexas testadas em ~3200-3600.
+  // 500 = normal, 4500 = crítico.
+  if (m.retractionCount > 500) {
+    const contrib = Math.min((m.retractionCount - 500) / 4000, 1.0) * 0.15;
     score += contrib;
     factors.push({
       name: "Retrações",
@@ -80,9 +82,11 @@ export function scoreComplexity(m: GcodeMetrics): ComplexityResult {
     });
   }
 
-  // Referência: 500 = normal, 3000 = crítico
-  if (m.shortSegmentCount > 500) {
-    const contrib = Math.min((m.shortSegmentCount - 500) / 2500, 1.0) * 0.15;
+  // Referência calibrada com peças reais: peça trivial (cubo) fica em ~400,
+  // peças médias em ~4000-8000, peças orgânicas/complexas testadas em ~24000-28000.
+  // 1000 = normal, 28000 = crítico.
+  if (m.shortSegmentCount > 1000) {
+    const contrib = Math.min((m.shortSegmentCount - 1000) / 27000, 1.0) * 0.15;
     score += contrib;
     factors.push({
       name: "Segmentos curtos",

@@ -50,9 +50,14 @@ export function densityForMaterial(tipo: string): number {
  *   detectar E negativo em modo absoluto (M82).
  *
  * Estratégia para islandCount:
- *   Conta transições para ;TYPE:External perimeter — cada ilha distinta
- *   requer uma nova seção de perímetro externo após travel/retração.
+ *   Conta transições para ;TYPE:External perimeter, mas só como ilha nova
+ *   quando precedidas de um deslocamento sem extrusão maior que
+ *   ISLAND_TRAVEL_THRESHOLD_MM desde a última extrusão real. Sem esse filtro,
+ *   o marcador ;TYPE:External perimeter se repete várias vezes por camada
+ *   (alternância entre parede interna/externa do mesmo contorno) e infla o
+ *   contador sem relação com fragmentação geométrica real.
  */
+const ISLAND_TRAVEL_THRESHOLD_MM = 2;
 export async function parseGcode(
   gcodePath: string,
   filamentDensity = 1.24,
@@ -74,6 +79,8 @@ export async function parseGcode(
   let layerChanges      = 0;
 
   let curX = 0, curY = 0, curZ = 0;
+  let hasExtruded       = false;
+  let travelSinceExtrude = 0;   // mm percorridos sem extrusão desde a última extrusão real
 
   await new Promise<void>((resolve, reject) => {
     const rl = readline.createInterface({
@@ -113,7 +120,11 @@ export async function parseGcode(
       // ── Marcadores de seção ───────────────────────────────────
       if (t.startsWith(";TYPE:")) {
         currentType = t.slice(6);
-        if (currentType === "External perimeter") islandCount++;
+        if (currentType === "External perimeter") {
+          if (!hasExtruded || travelSinceExtrude > ISLAND_TRAVEL_THRESHOLD_MM) {
+            islandCount++;
+          }
+        }
         return;
       }
 
@@ -140,6 +151,9 @@ export async function parseGcode(
       const nz = mv[4] != null ? parseFloat(mv[4]) : curZ;
 
       const isRetractLine = t.includes("; retract") || t.includes("; unretract");
+      const dist = Math.sqrt((nx - curX) ** 2 + (ny - curY) ** 2 + (nz - curZ) ** 2);
+
+      let isRealExtrusion = false;
 
       if (mv[5] != null) {
         const newE = parseFloat(mv[5]);
@@ -148,6 +162,7 @@ export async function parseGcode(
 
         // Conta apenas extrusão real (dE positivo, sem linhas de retract/unretract)
         if (!isRetractLine && dE > 0.001) {
+          isRealExtrusion = true;
           totalE += dE;
           if (currentType === "Support" || currentType === "Support interface") {
             supportE += dE;
@@ -158,10 +173,17 @@ export async function parseGcode(
         }
       }
 
+      // Rastreia deslocamento sem extrusão, usado para detectar ilhas (ver islandCount acima)
+      if (isRealExtrusion) {
+        hasExtruded = true;
+        travelSinceExtrude = 0;
+      } else {
+        travelSinceExtrude += dist;
+      }
+
       // Segmentos curtos: apenas G1 com extrusão real e distância < 1mm
-      if (mv[1] === "G1" && !isRetractLine && mv[5] != null) {
-        const dist = Math.sqrt((nx - curX) ** 2 + (ny - curY) ** 2 + (nz - curZ) ** 2);
-        if (dist > 0 && dist < 1.0) shortSegmentCount++;
+      if (mv[1] === "G1" && isRealExtrusion && dist > 0 && dist < 1.0) {
+        shortSegmentCount++;
       }
 
       curX = nx; curY = ny; curZ = nz;
