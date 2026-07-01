@@ -260,8 +260,9 @@ export function DashboardPage() {
     } catch { /* silencioso */ }
   }, []);
 
-  useEffect(() => {
-    Promise.all([
+  const fetchPedidos = useCallback((showLoading: boolean) => {
+    if (showLoading) setLoading(true);
+    return Promise.all([
       api.get<any[]>('/pedidos').then(r => r.data.map(normalizePedido)),
       api.get<Impressora[]>('/impressoras').then(r => r.data).catch(() => [] as Impressora[]),
     ])
@@ -275,9 +276,23 @@ export function DashboardPage() {
   }, [fetchUnreadResumo]);
 
   useEffect(() => {
-    const id = setInterval(fetchUnreadResumo, 10_000);
+    fetchPedidos(true);
+  }, [fetchPedidos]);
+
+  // Reconfirmação de pagamento: o redirect do Stripe chega antes do webhook
+  // processar o status no backend, então o pedido some da lista até o
+  // próximo fetch. Faz alguns retries curtos logo após o redirect de sucesso.
+  useEffect(() => {
+    if (!window.location.search.includes('pagamento=sucesso')) return;
+    const attempts = [2000, 3000, 4000];
+    const timers = attempts.map(delay => setTimeout(() => fetchPedidos(false), delay));
+    return () => timers.forEach(clearTimeout);
+  }, [fetchPedidos]);
+
+  useEffect(() => {
+    const id = setInterval(() => fetchPedidos(false), 15_000);
     return () => clearInterval(id);
-  }, [fetchUnreadResumo]);
+  }, [fetchPedidos]);
 
   const printerByPedido = React.useMemo(() => {
     const m = new Map<number, Impressora>();
