@@ -1,17 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Paper, Typography, IconButton, CircularProgress, Alert,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
   Tabs, Tab, Chip, List, ListItem, ListItemText, Divider,
   Select, MenuItem, FormControl, InputLabel, type SelectChangeEvent,
+  Tooltip, Badge,
 } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
+import DownloadIcon from '@mui/icons-material/Download';
+import ReplayIcon from '@mui/icons-material/Replay';
+import ChatIcon from '@mui/icons-material/Chat';
 import api from '../../services/api';
 import { type Pedido, type StatusPedido } from '../../types/Pedido';
 import { getStatusTranslation, getStatusColor } from '../../utils/translations';
 import { normalizePedido } from '../../utils/normalize';
+import { ChatDialog } from '../../components/ChatDialog';
 
 const STATUS_TABS: { label: string; statuses: StatusPedido[] }[] = [
   { label: 'Na fila',            statuses: ['na_fila'] },
@@ -33,6 +38,19 @@ export function AdminOrdersPage() {
   const [selected, setSelected]       = useState<Pedido | null>(null);
   const [editOpen, setEditOpen]       = useState(false);
   const [newStatus, setNewStatus]     = useState<StatusPedido>('na_fila');
+  const [chatPedido, setChatPedido]   = useState<{ id: number; nome: string } | null>(null);
+  const [unreadMap, setUnreadMap]     = useState<Record<number, number>>({});
+
+  const fetchUnreadResumo = useCallback(async () => {
+    try {
+      const { data } = await api.get<{ idPedido: number; count: number }[]>('/pedidos/mensagens/resumo');
+      setUnreadMap(prev => {
+        const next = { ...prev };
+        data.forEach(({ idPedido, count }) => { next[idPedido] = count; });
+        return next;
+      });
+    } catch { /* silencioso */ }
+  }, []);
 
   const fetchPedidos = () => {
     setLoading(true);
@@ -45,7 +63,39 @@ export function AdminOrdersPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchPedidos(); }, []);
+  const handleDownloadStl = async (pedido: Pedido) => {
+    try {
+      const response = await api.get(`/arquivos/${pedido.idArquivo}/download`, {
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(response.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = pedido.nomeArquivo ?? `pedido_${pedido.id}.stl`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Erro ao baixar arquivo STL.');
+    }
+  };
+
+  const handleReimprimir = async (pedido: Pedido) => {
+    if (!confirm(`Reenviar pedido "${pedido.nome}" para a fila de impressão?`)) return;
+    try {
+      await api.post(`/pedidos/${pedido.id}/reimprimir`);
+      setSelected(null);
+      fetchPedidos();
+    } catch {
+      setError('Erro ao reimprimir.');
+    }
+  };
+
+  useEffect(() => {
+    fetchPedidos();
+    fetchUnreadResumo();
+    const id = setInterval(fetchUnreadResumo, 15_000);
+    return () => clearInterval(id);
+  }, [fetchUnreadResumo]);
 
   const handleUpdateStatus = async () => {
     if (!selected) return;
@@ -78,13 +128,20 @@ export function AdminOrdersPage() {
       ),
     },
     {
-      field: 'actions', headerName: 'Ações', width: 100, sortable: false,
+      field: 'actions', headerName: 'Ações', width: 130, sortable: false,
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setSelected(row)}><VisibilityIcon /></IconButton>
           <IconButton size="small" onClick={() => { setSelected(row); setNewStatus(row.status); setEditOpen(true); }}>
             <EditIcon />
           </IconButton>
+          <Tooltip title="Chat com cliente">
+            <IconButton size="small" onClick={() => setChatPedido({ id: row.id, nome: row.nome })}>
+              <Badge badgeContent={unreadMap[row.id] || 0} color="error" variant="dot">
+                <ChatIcon fontSize="small" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
         </Box>
       ),
     },
@@ -134,11 +191,46 @@ export function AdminOrdersPage() {
             </List>
           </DialogContent>
           <DialogActions>
+            <Tooltip title="Baixar arquivo STL original">
+              <Button
+                startIcon={<DownloadIcon />}
+                onClick={() => handleDownloadStl(selected)}
+              >
+                Baixar STL
+              </Button>
+            </Tooltip>
+            {(selected.status === 'falhou' || selected.status === 'concluido' || selected.status === 'em_impressao') && (
+              <Tooltip title="Reenviar para a fila de impressão">
+                <Button
+                  startIcon={<ReplayIcon />}
+                  color="warning"
+                  onClick={() => handleReimprimir(selected)}
+                >
+                  Reimprimir
+                </Button>
+              </Tooltip>
+            )}
+            <Badge badgeContent={unreadMap[selected.id] || 0} color="error">
+              <Button
+                startIcon={<ChatIcon />}
+                onClick={() => { setSelected(null); setChatPedido({ id: selected.id, nome: selected.nome }); }}
+              >
+                Chat
+              </Button>
+            </Badge>
             <Button onClick={() => { setNewStatus(selected.status); setEditOpen(true); }}>Editar Status</Button>
             <Button onClick={() => setSelected(null)}>Fechar</Button>
           </DialogActions>
         </Dialog>
       )}
+
+      <ChatDialog
+        pedidoId={chatPedido?.id ?? 0}
+        pedidoNome={chatPedido?.nome ?? ''}
+        meuTipo="admin"
+        open={chatPedido !== null}
+        onClose={() => { setChatPedido(null); fetchUnreadResumo(); }}
+      />
 
       {/* Editar status */}
       {editOpen && selected && (

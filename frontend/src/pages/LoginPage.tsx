@@ -18,7 +18,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       const { data } = await api.post('/auth/login', { email, senha });
-      login(data.token, data.tipo === 'admin' ? 'admin' : 'client');
+      login(data.token, data.tipo === 'admin' ? 'admin' : 'client', data.usuario?.nivel);
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Email ou senha inválidos.');
     } finally {
@@ -52,8 +52,9 @@ export function LoginPage() {
           Entrar com Google
         </Button>
 
-        <Box sx={{ mt: 2, textAlign: 'center' }}>
-          <Link to="/admin/login" style={{ fontSize: 14 }}>Acesso administrativo</Link>
+        <Box sx={{ mt: 2, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          <Link to="/register" style={{ fontSize: 14 }}>Não tem conta? Cadastre-se</Link>
+          <Link to="/admin/login" style={{ fontSize: 14, color: '#888' }}>Acesso administrativo</Link>
         </Box>
       </Paper>
     </Container>

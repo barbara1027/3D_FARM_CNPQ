@@ -82,19 +82,17 @@ export class QualidadeImpressaoController {
    */
   criar = async (req: Request, res: Response) => {
     try {
-      const { nome, altura, espessura, preenchimento, velocidade, temperaturaBico, temperaturaMesa,
+      const { nome, altura, espessura, velocidade,
               suporte, adesao, perimetros, camadasTopo, camadasBase, anguloSuporte } = req.body;
       if (
-        altura === undefined || espessura === undefined || preenchimento === undefined ||
-        velocidade === undefined || temperaturaBico === undefined || temperaturaMesa === undefined ||
-        suporte === undefined || adesao === undefined
+        altura === undefined || espessura === undefined ||
+        velocidade === undefined || suporte === undefined || adesao === undefined
       ) {
         return res.status(400).json({ message: "Todos os parâmetros de impressão são obrigatórios." });
       }
       return res.status(201).json(await this.qualidadeImpressaoService.criar({
         nome: nome ?? "",
-        altura, espessura, preenchimento, velocidade,
-        temperaturaBico, temperaturaMesa, suporte, adesao,
+        altura, espessura, velocidade, suporte, adesao,
         perimetros, camadasTopo, camadasBase, anguloSuporte,
       }));
     } catch (error: any) {
@@ -132,10 +130,10 @@ export class QualidadeImpressaoController {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
-      const { nome, altura, espessura, preenchimento, velocidade, temperaturaBico, temperaturaMesa,
+      const { nome, altura, espessura, velocidade,
               suporte, adesao, perimetros, camadasTopo, camadasBase, anguloSuporte } = req.body;
       return res.status(200).json(await this.qualidadeImpressaoService.atualizar(id, {
-        nome, altura, espessura, preenchimento, velocidade, temperaturaBico, temperaturaMesa,
+        nome, altura, espessura, velocidade,
         suporte, adesao, perimetros, camadasTopo, camadasBase, anguloSuporte,
       }));
     } catch (error: any) {

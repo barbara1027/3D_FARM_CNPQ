@@ -1,5 +1,6 @@
 import { Pedido, PedidoRepository, StatusPedido } from "./pedidos.repository";
 import { runAutoSlicePipeline } from "../slicer/auto-slice.service";
+import { emailPedidoConcluido, emailClientePecaPronta } from "../../services/email.service";
 
 export interface CreatePedidoServiceDTO {
   nome: string;
@@ -70,7 +71,30 @@ export class PedidoService {
     const pedido = await this.repo.findById(id);
     if (!pedido) throw new Error("Pedido não encontrado.");
     await this.repo.update(id, data);
-    return (await this.repo.findById(id))!;
+    const updated = (await this.repo.findById(id))!;
+
+    if (data.status === "concluido" && pedido.status !== "concluido") {
+      emailPedidoConcluido({
+        id: updated.id,
+        nome: updated.nome,
+        nomeUsuario:   (updated as any).nomeUsuario,
+        emailUsuario:  (updated as any).emailUsuario,
+        preco:         updated.preco,
+        tempoEstimadoS: (updated as any).tempoEstimadoS ?? null,
+        materialGramas: (updated as any).materialGramas ?? null,
+      }).catch((e: any) => console.error("[SERVICE] Email admin concluido:", e.message));
+
+      const emailCliente = (updated as any).emailUsuario;
+      if (emailCliente) {
+        emailClientePecaPronta({
+          nome:         updated.nome,
+          emailUsuario: emailCliente,
+          nomeUsuario:  (updated as any).nomeUsuario,
+        }).catch((e: any) => console.error("[SERVICE] Email cliente concluido:", e.message));
+      }
+    }
+
+    return updated;
   }
 
   async remover(id: number): Promise<{ message: string }> {

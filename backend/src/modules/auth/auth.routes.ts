@@ -46,14 +46,15 @@ authRoutes.get(
   (req: Request, res: Response) => {
     // req.user aqui é o UsuarioPublico populado pelo google.strategy.ts
     const usuario = req.user as any;
+    const nivel: "iniciante" | "avancado" = usuario.nivel ?? "iniciante";
     const token = gerarToken({
       id: usuario.id,
       email: usuario.email,
       tipo: usuario.tipo,
+      nivel,
     });
     const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:5173";
-    // Token no fragment (#) — não aparece em logs do servidor nem no header Referer
-    res.redirect(`${frontendUrl}/auth/callback#token=${token}&tipo=${usuario.tipo}`);
+    res.redirect(`${frontendUrl}/auth/callback#token=${token}&tipo=${usuario.tipo}&nivel=${nivel}`);
   }
 );
 

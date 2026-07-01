@@ -18,7 +18,8 @@ type FormData = Omit<Material, 'id'> & { id?: number };
 const empty: FormData = {
   nome: '', tipo: 'PLA', preco: 0.12, status: 'disponivel', cor: '',
   diametro: 1.75,
-  tempBicoMin: null, tempBicoMax: null, tempMesaMin: null, tempMesaMax: null,
+  tempBicoMin: null, tempBicoMax: null, tempBicoRecomendada: null,
+  tempMesaMin: null, tempMesaMax: null, tempMesaRecomendada: null,
   fanMin: null, fanMax: null,
   camadaMin: null, camadaMax: null,
 };

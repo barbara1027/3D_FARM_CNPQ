@@ -12,8 +12,10 @@ export interface Material {
   diametro: number;
   tempBicoMin: number | null;
   tempBicoMax: number | null;
+  tempBicoRecomendada: number | null;
   tempMesaMin: number | null;
   tempMesaMax: number | null;
+  tempMesaRecomendada: number | null;
   fanMin: number | null;
   fanMax: number | null;
   camadaMin: number | null;
@@ -29,8 +31,10 @@ export interface CreateMaterialRepositoryDTO {
   diametro?: number;
   tempBicoMin?: number | null;
   tempBicoMax?: number | null;
+  tempBicoRecomendada?: number | null;
   tempMesaMin?: number | null;
   tempMesaMax?: number | null;
+  tempMesaRecomendada?: number | null;
   fanMin?: number | null;
   fanMax?: number | null;
   camadaMin?: number | null;
@@ -46,8 +50,10 @@ export interface UpdateMaterialRepositoryDTO {
   diametro?: number;
   tempBicoMin?: number | null;
   tempBicoMax?: number | null;
+  tempBicoRecomendada?: number | null;
   tempMesaMin?: number | null;
   tempMesaMax?: number | null;
+  tempMesaRecomendada?: number | null;
   fanMin?: number | null;
   fanMax?: number | null;
   camadaMin?: number | null;
@@ -58,12 +64,14 @@ const SEL = `
   SELECT
     id, nome, tipo, preco, status, cor,
     diametro,
-    temp_bico_min AS tempBicoMin,
-    temp_bico_max AS tempBicoMax,
-    temp_mesa_min AS tempMesaMin,
-    temp_mesa_max AS tempMesaMax,
-    fan_min   AS fanMin,
-    fan_max   AS fanMax,
+    temp_bico_min         AS tempBicoMin,
+    temp_bico_max         AS tempBicoMax,
+    temp_bico_recomendada AS tempBicoRecomendada,
+    temp_mesa_min         AS tempMesaMin,
+    temp_mesa_max         AS tempMesaMax,
+    temp_mesa_recomendada AS tempMesaRecomendada,
+    fan_min    AS fanMin,
+    fan_max    AS fanMax,
     camada_min AS camadaMin,
     camada_max AS camadaMax,
     created_at, updated_at
@@ -86,14 +94,15 @@ export class MaterialRepository {
     const [result]: any = await db.execute(`
       INSERT INTO materiais
         (nome, tipo, preco, status, cor, diametro,
-         temp_bico_min, temp_bico_max, temp_mesa_min, temp_mesa_max,
+         temp_bico_min, temp_bico_max, temp_bico_recomendada,
+         temp_mesa_min, temp_mesa_max, temp_mesa_recomendada,
          fan_min, fan_max, camada_min, camada_max)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       data.nome, data.tipo, data.preco, data.status, data.cor,
       data.diametro ?? 1.75,
-      data.tempBicoMin ?? null, data.tempBicoMax ?? null,
-      data.tempMesaMin ?? null, data.tempMesaMax ?? null,
+      data.tempBicoMin ?? null, data.tempBicoMax ?? null, data.tempBicoRecomendada ?? null,
+      data.tempMesaMin ?? null, data.tempMesaMax ?? null, data.tempMesaRecomendada ?? null,
       data.fanMin ?? null, data.fanMax ?? null,
       data.camadaMin ?? null, data.camadaMax ?? null,
     ]);
@@ -110,10 +119,12 @@ export class MaterialRepository {
     if (data.status    !== undefined) { campos.push("status = ?");     valores.push(data.status); }
     if (data.cor       !== undefined) { campos.push("cor = ?");        valores.push(data.cor); }
     if (data.diametro  !== undefined) { campos.push("diametro = ?");   valores.push(data.diametro); }
-    if (data.tempBicoMin !== undefined) { campos.push("temp_bico_min = ?"); valores.push(data.tempBicoMin); }
-    if (data.tempBicoMax !== undefined) { campos.push("temp_bico_max = ?"); valores.push(data.tempBicoMax); }
-    if (data.tempMesaMin !== undefined) { campos.push("temp_mesa_min = ?"); valores.push(data.tempMesaMin); }
-    if (data.tempMesaMax !== undefined) { campos.push("temp_mesa_max = ?"); valores.push(data.tempMesaMax); }
+    if (data.tempBicoMin       !== undefined) { campos.push("temp_bico_min = ?");         valores.push(data.tempBicoMin); }
+    if (data.tempBicoMax       !== undefined) { campos.push("temp_bico_max = ?");         valores.push(data.tempBicoMax); }
+    if (data.tempBicoRecomendada !== undefined) { campos.push("temp_bico_recomendada = ?"); valores.push(data.tempBicoRecomendada); }
+    if (data.tempMesaMin       !== undefined) { campos.push("temp_mesa_min = ?");         valores.push(data.tempMesaMin); }
+    if (data.tempMesaMax       !== undefined) { campos.push("temp_mesa_max = ?");         valores.push(data.tempMesaMax); }
+    if (data.tempMesaRecomendada !== undefined) { campos.push("temp_mesa_recomendada = ?"); valores.push(data.tempMesaRecomendada); }
     if (data.fanMin    !== undefined) { campos.push("fan_min = ?");    valores.push(data.fanMin); }
     if (data.fanMax    !== undefined) { campos.push("fan_max = ?");    valores.push(data.fanMax); }
     if (data.camadaMin !== undefined) { campos.push("camada_min = ?"); valores.push(data.camadaMin); }

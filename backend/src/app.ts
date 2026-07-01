@@ -15,11 +15,16 @@ const app = express();
 
 app.use(helmet());
 
+const corsOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+];
+if (process.env.FRONTEND_URL && !corsOrigins.includes(process.env.FRONTEND_URL)) {
+  corsOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:5174",
-  ],
+  origin: corsOrigins,
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

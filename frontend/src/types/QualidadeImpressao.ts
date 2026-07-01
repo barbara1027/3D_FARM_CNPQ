@@ -3,10 +3,7 @@ export interface QualidadeImpressao {
   nome: string;
   altura: number;
   espessura: number;
-  preenchimento: number;
   velocidade: number;
-  temperaturaBico: number;
-  temperaturaMesa: number;
   suporte: number;
   adesao: number;
   perimetros: number;

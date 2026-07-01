@@ -12,9 +12,10 @@ export function AuthCallbackPage() {
     const hash = location.hash.replace(/^#/, '');
     const p = new URLSearchParams(hash);
     const token = p.get('token');
-    const tipo = p.get('tipo');
+    const tipo  = p.get('tipo');
+    const nivel = p.get('nivel') ?? undefined;
     if (token && tipo) {
-      login(token, tipo === 'admin' ? 'admin' : 'client');
+      login(token, tipo === 'admin' ? 'admin' : 'client', nivel);
     } else {
       window.location.href = '/login';
     }

@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { AuthService } from "./auth.service";
+import { db } from "../../database/connection";
 
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -60,6 +61,16 @@ export class AuthController {
    *         description: Não autenticado
    */
   me = async (req: Request, res: Response) => {
-    return res.status(200).json(req.jwtUser);
+    try {
+      const payload = req.jwtUser!;
+      const [rows]: any = await db.execute(
+        "SELECT id, nome, email, tipo, nivel FROM usuarios WHERE id = ? LIMIT 1",
+        [payload.sub]
+      );
+      if (!rows?.length) return res.status(404).json({ message: "Usuário não encontrado." });
+      return res.status(200).json(rows[0]);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
   };
 }

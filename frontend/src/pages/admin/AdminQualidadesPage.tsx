@@ -15,9 +15,8 @@ import { normalizeQualidade } from '../../utils/normalize';
 type FormData = Omit<QualidadeImpressao, 'id' | 'createdAt' | 'updatedAt'> & { id?: number };
 
 const empty: FormData = {
-  nome: '', altura: 0.2, espessura: 1.2, preenchimento: 15,
-  velocidade: 50, temperaturaBico: 210, temperaturaMesa: 60,
-  suporte: 0, adesao: 0,
+  nome: '', altura: 0.2, espessura: 1.2,
+  velocidade: 50, suporte: 0, adesao: 0,
   perimetros: 2, camadasTopo: 3, camadasBase: 3, anguloSuporte: 45,
 };
 
@@ -77,14 +76,11 @@ export function AdminQualidadesPage() {
     { field: 'nome', headerName: 'Nome', width: 150,
       renderCell: ({ value, row }) => value || `Qualidade ${row.id}` },
     { field: 'altura', headerName: 'Camada (mm)', width: 115, type: 'number' },
-    { field: 'preenchimento', headerName: 'Preench. (%)', width: 115, type: 'number' },
     { field: 'velocidade', headerName: 'Veloc. (mm/s)', width: 115, type: 'number' },
     { field: 'perimetros', headerName: 'Perímetros', width: 100, type: 'number' },
     { field: 'camadasTopo', headerName: 'Topo', width: 80, type: 'number' },
     { field: 'camadasBase', headerName: 'Base', width: 80, type: 'number' },
     { field: 'anguloSuporte', headerName: 'Suporte (°)', width: 100, type: 'number' },
-    { field: 'temperaturaBico', headerName: 'T.Bico (°C)', width: 105, type: 'number' },
-    { field: 'temperaturaMesa', headerName: 'T.Mesa (°C)', width: 105, type: 'number' },
     { field: 'actions', headerName: 'Ações', width: 90, sortable: false,
       renderCell: ({ row }) => (
         <Box>
@@ -125,8 +121,6 @@ export function AdminQualidadesPage() {
               value={form.espessura} onChange={handleField} inputProps={{ step: '0.1' }} />
           </Box>
           <Box display="flex" gap={2}>
-            <TextField name="preenchimento" label="Preenchimento (%)" type="number" fullWidth
-              value={form.preenchimento} onChange={handleField} inputProps={{ min: '0', max: '100' }} />
             <TextField name="velocidade" label="Velocidade (mm/s)" type="number" fullWidth
               value={form.velocidade} onChange={handleField} />
           </Box>
@@ -161,17 +155,6 @@ export function AdminQualidadesPage() {
             </Box>
           </Box>
 
-          {/* Temperatura (genérica, pode ser sobrescrita pelo material) */}
-          <Divider />
-          <Typography variant="subtitle2" color="text.secondary">
-            Temperatura padrão (sobrescrita pelas faixas do material)
-          </Typography>
-          <Box display="flex" gap={2}>
-            <TextField name="temperaturaBico" label="Temp. bico (°C)" type="number" fullWidth
-              value={form.temperaturaBico} onChange={handleField} />
-            <TextField name="temperaturaMesa" label="Temp. mesa (°C)" type="number" fullWidth
-              value={form.temperaturaMesa} onChange={handleField} />
-          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={close} disabled={saving}>Cancelar</Button>

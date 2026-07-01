@@ -17,9 +17,9 @@ export interface LoginResult {
   usuario: UsuarioPublico;
 }
 
-export function gerarToken(usuario: { id: number; email: string; tipo: "admin" | "cliente" }): string {
+export function gerarToken(usuario: { id: number; email: string; tipo: "admin" | "cliente"; nivel: "iniciante" | "avancado" }): string {
   return jwt.sign(
-    { sub: usuario.id, email: usuario.email, tipo: usuario.tipo },
+    { sub: usuario.id, email: usuario.email, tipo: usuario.tipo, nivel: usuario.nivel },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
   );
@@ -42,7 +42,7 @@ export class AuthService {
     if (!senhaValida) throw new Error("Credenciais inválidas.");
 
     const { senha_hash, ...usuarioPublico } = usuario;
-    const token = gerarToken(usuario);
+    const token = gerarToken({ id: usuario.id, email: usuario.email, tipo: usuario.tipo, nivel: usuario.nivel });
 
     return { token, tipo: usuario.tipo, usuario: usuarioPublico };
   }

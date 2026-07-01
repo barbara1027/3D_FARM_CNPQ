@@ -4,7 +4,7 @@ import {
   CircularProgress, Alert, TextField, FormControl, InputLabel, Select,
   MenuItem, Skeleton, IconButton, type SelectChangeEvent,
   List, ListItem, ListItemText, Divider, Chip, Card, CardContent,
-  Dialog, DialogTitle, DialogContent, DialogActions, Grid,
+  Dialog, DialogTitle, DialogContent, DialogActions, Collapse, Tooltip,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
@@ -12,9 +12,10 @@ import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import type { Material } from '../types/Material';
 import type { QualidadeImpressao } from '../types/QualidadeImpressao';
 import { normalizeMaterial, normalizeQualidade } from '../utils/normalize';
@@ -44,6 +45,82 @@ const QUALITY_INFO: Record<string, { title: string; description: string; detail:
     color: '#9c27b0',
   },
 };
+
+const INFILL_OPTIONS = [
+  {
+    value: '0',
+    label: '0%',
+    title: 'Vazio',
+    short: 'Oco por dentro. Mínimo peso e custo, mas muito frágil.',
+    detail: 'A peça é impressa apenas com as paredes externas, sem nenhum preenchimento interno. É extremamente leve e rápida de imprimir, mas fraquíssima — qualquer pressão ou impacto pode quebrá-la. Use apenas para peças decorativas que nunca serão manuseadas com força.',
+  },
+  {
+    value: '20',
+    label: '20%',
+    title: 'Leve',
+    short: 'Leve e econômico. Bom para decoração e protótipos simples.',
+    detail: 'Preenchimento esparso, parecido com uma colmeia interna. Economiza muito material e tempo. Funciona bem para decoração, maquetes e protótipos que não vão sofrer esforço mecânico. É a opção mais popular para peças simples.',
+  },
+  {
+    value: '40',
+    label: '40%',
+    title: 'Equilibrado',
+    short: 'Boa resistência para uso no dia a dia. Recomendado para a maioria dos projetos.',
+    detail: 'O equilíbrio ideal entre resistência, peso e custo. A peça suporta manuseio normal, pressão leve e pequenos impactos. Funciona para suportes, organizadores, tampas e peças funcionais de uso doméstico. Recomendamos este para quem não sabe qual escolher.',
+  },
+  {
+    value: '60',
+    label: '60%',
+    title: 'Resistente',
+    short: 'Boa resistência para peças que sofrem impacto ou pressão frequente.',
+    detail: 'Peça robusta e mais pesada. Indicada para objetos que precisam suportar carga, impacto repetido ou uso intenso. Exemplos: suportes de parede, encaixes mecânicos, peças de reposição. Leva mais tempo e usa mais material que o Equilibrado.',
+  },
+  {
+    value: '80',
+    label: '80%',
+    title: 'Muito resistente',
+    short: 'Quase sólido. Para carga contínua ou impacto intenso.',
+    detail: 'A peça fica quase completamente preenchida internamente. Oferece alta resistência a cargas contínuas e impactos fortes. Use quando a durabilidade é crítica: ferramentas, peças industriais, suportes de carga. Custo e tempo de impressão significativamente maiores.',
+  },
+  {
+    value: '100',
+    label: '100%',
+    title: 'Sólido',
+    short: 'Completamente sólido. Máxima resistência, mas muito lento e caro.',
+    detail: 'O interior da peça é 100% preenchido — completamente sólido como um bloco. Oferece a máxima resistência possível, mas custa muito mais e demora bem mais para imprimir (às vezes 3× a mais que o 40%). Use apenas quando a peça vai sofrer carga extrema e resistência é mais importante que custo.',
+  },
+];
+
+const MATERIAL_TYPES_INFO = [
+  {
+    tipo: 'PLA',
+    desc: 'O mais comum. Fácil de imprimir, boa precisão e acabamento. Não tolera calor acima de ~60°C e pode deformar ao sol. Ideal para decoração, protótipos, brinquedos e peças de uso leve em ambientes internos.',
+  },
+  {
+    tipo: 'PETG',
+    desc: 'Resistente, durável e impermeável. Tolera calor até ~80°C e não absorve umidade. Boa escolha para peças funcionais, recipientes, peças que terão contato com água ou que ficam ao sol moderado.',
+  },
+  {
+    tipo: 'ABS',
+    desc: 'Alta resistência mecânica e ao calor (~100°C). Mais difícil de imprimir — pode empenar se não houver condições controladas. Para peças industriais, de uso intenso ou expostas a temperaturas altas.',
+  },
+  {
+    tipo: 'TPU',
+    desc: 'Flexível como borracha. Absorve impactos sem quebrar. Ideal para capas de celular, vedações, solados, apertos de ferramenta e qualquer peça que precise dobrar ou comprimir.',
+  },
+  {
+    tipo: 'ASA',
+    desc: 'Muito similar ao ABS, mas com resistência UV — não descolore nem fragiliza ao sol. Indicado para peças ao ar livre: suportes externos, peças de jardinagem, componentes de automóveis.',
+  },
+  {
+    tipo: 'Nylon',
+    desc: 'Extremamente resistente ao desgaste e levemente flexível. Absorve umidade do ambiente (o que pode afetar a impressão se o filamento não for guardado corretamente). Para engrenagens, peças com atrito e componentes mecânicos de alta carga.',
+  },
+  {
+    tipo: 'Resina',
+    desc: 'Alta resolução de detalhes com fotopolimerização UV. Acabamento extremamente suave e preciso. Mais frágil que filamentos plásticos. Ideal para miniaturas, joias e protótipos com detalhes muito finos.',
+  },
+];
 
 // Step 1 — Upload
 function UploadStep({ files, onFiles }: { files: File[]; onFiles: (f: File[]) => void }) {
@@ -94,7 +171,7 @@ function UploadStep({ files, onFiles }: { files: File[]; onFiles: (f: File[]) =>
   );
 }
 
-// Step 2 — Configuração (simplificada)
+// Step 2 — Configuração
 interface OrderData {
   projectName: string;
   idMaterial: number | '';
@@ -124,8 +201,8 @@ const EMPTY: OrderData = {
   materialSpec: '',
   qualityPreset: 'normal',
   layerHeight: '0.2',
-  infill: '15',
-  printSpeed: '50',
+  infill: '20',
+  printSpeed: '60',
   supports: 'none',
   adhesion: 'none',
   description: '',
@@ -146,8 +223,21 @@ function midpoint(min: number | null, max: number | null, fallback: number): num
   return Math.round((min + max) / 2);
 }
 
+function LabelComInfo({ label, onInfo }: { label: string; onInfo: () => void }) {
+  return (
+    <Box display="flex" alignItems="center" gap={0.5} mb={1}>
+      <Typography variant="subtitle2" fontWeight={600}>{label}</Typography>
+      <Tooltip title="Clique para saber mais" arrow>
+        <IconButton size="small" onClick={onInfo} sx={{ p: 0.25 }}>
+          <InfoOutlinedIcon fontSize="small" color="action" />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+}
+
 function ConfigStep({
-  data, onChange, materiais, qualidades, loadingMateriais, loadingQualidades,
+  data, onChange, materiais, qualidades, loadingMateriais, loadingQualidades, nivelUsuario,
 }: {
   data: OrderData;
   onChange: (field: keyof OrderData, value: any) => void;
@@ -155,8 +245,14 @@ function ConfigStep({
   qualidades: QualidadeImpressao[];
   loadingMateriais: boolean;
   loadingQualidades: boolean;
+  nivelUsuario: 'iniciante' | 'avancado' | null;
 }) {
-  const [infoQuality, setInfoQuality] = useState<string | null>(null);
+  const [infoQuality, setInfoQuality]   = useState<string | null>(null);
+  const [infoMaterial, setInfoMaterial] = useState(false);
+  const [infoInfill, setInfoInfill]     = useState(false);
+  const [expandParams, setExpandParams] = useState(false);
+  const [qtdStr, setQtdStr]             = useState(String(data.quantidade));
+  useEffect(() => { setQtdStr(String(data.quantidade)); }, [data.quantidade]);
 
   const mat = materiais.find(m => m.id === data.idMaterial) ?? null;
 
@@ -166,8 +262,8 @@ function ConfigStep({
     onChange('idMaterial', id);
     onChange('materialSpec', m?.nome ?? '');
     if (m) {
-      onChange('tempBico', midpoint(m.tempBicoMin, m.tempBicoMax, 0));
-      onChange('tempMesa', midpoint(m.tempMesaMin, m.tempMesaMax, 0));
+      onChange('tempBico', m.tempBicoRecomendada ?? midpoint(m.tempBicoMin, m.tempBicoMax, 0));
+      onChange('tempMesa', m.tempMesaRecomendada ?? midpoint(m.tempMesaMin, m.tempMesaMax, 0));
       onChange('fanMin', m.fanMin ?? 50);
       onChange('fanMax', m.fanMax ?? 100);
     }
@@ -181,29 +277,32 @@ function ConfigStep({
     const qual = qualidades.find(q => Math.abs(q.altura - parseFloat(h)) < 0.005);
     if (qual) {
       onChange('idQualidade', qual.id);
-      onChange('infill',        String(qual.preenchimento));
-      onChange('printSpeed',    String(qual.velocidade));
-      onChange('perimeters',    qual.perimetros);
-      onChange('topLayers',     qual.camadasTopo);
-      onChange('bottomLayers',  qual.camadasBase);
-      onChange('supportAngle',  qual.anguloSuporte);
+      onChange('printSpeed',   String(qual.velocidade));
+      onChange('perimeters',   qual.perimetros);
+      onChange('topLayers',    qual.camadasTopo);
+      onChange('bottomLayers', qual.camadasBase);
+      onChange('supportAngle', qual.anguloSuporte);
+      onChange('supports',     qual.suporte ? 'touching_buildplate' : 'none');
+      onChange('adhesion',     qual.adesao  ? 'brim'                : 'none');
     }
   };
+
+  const selectedInfill = INFILL_OPTIONS.find(o => o.value === data.infill);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
 
       {/* Nome do projeto */}
       <TextField
-        label="Nome do projeto *"
-        fullWidth required
+        label="Nome do projeto"
+        fullWidth
         value={data.projectName}
         onChange={(e) => onChange('projectName', e.target.value)}
       />
 
       {/* Material */}
       <Box>
-        <Typography variant="subtitle2" fontWeight={600} gutterBottom>Material</Typography>
+        <LabelComInfo label="Material (filamento)" onInfo={() => setInfoMaterial(true)} />
         {loadingMateriais ? <Skeleton variant="rectangular" height={56} sx={{ borderRadius: 1 }} /> : (
           <FormControl fullWidth required>
             <InputLabel>Filamento</InputLabel>
@@ -223,12 +322,22 @@ function ConfigStep({
             </Select>
           </FormControl>
         )}
-        {mat && (
-          <Box sx={{ mt: 1, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-            <Chip size="small" label={`Ø ${mat.diametro}mm`} variant="outlined" />
-            {mat.tempBicoMin != null && <Chip size="small" label={`Bico: ${mat.tempBicoMin}–${mat.tempBicoMax}°C`} variant="outlined" />}
-            {mat.tempMesaMin != null && <Chip size="small" label={`Mesa: ${mat.tempMesaMin}–${mat.tempMesaMax}°C`} variant="outlined" />}
-          </Box>
+        {/* Chips técnicos apenas para avançado, com tooltip explicativo */}
+        {mat && nivelUsuario === 'avancado' && (
+          <Tooltip
+            title="Parâmetros recomendados pelo fabricante para este filamento — usados automaticamente no fatiamento"
+            arrow placement="bottom-start"
+          >
+            <Box sx={{ mt: 1, display: 'inline-flex', gap: 0.5, flexWrap: 'wrap', cursor: 'help' }}>
+              <Chip size="small" label={`Ø ${mat.diametro}mm`} variant="outlined" />
+              {mat.tempBicoMin != null && (
+                <Chip size="small" label={`Bico: ${mat.tempBicoMin}–${mat.tempBicoMax}°C`} variant="outlined" />
+              )}
+              {mat.tempMesaMin != null && (
+                <Chip size="small" label={`Mesa: ${mat.tempMesaMin}–${mat.tempMesaMax}°C`} variant="outlined" />
+              )}
+            </Box>
+          </Tooltip>
         )}
       </Box>
 
@@ -246,8 +355,17 @@ function ConfigStep({
           </IconButton>
           <TextField
             type="number"
-            value={data.quantidade}
-            onChange={e => onChange('quantidade', Math.max(1, parseInt(e.target.value) || 1))}
+            value={qtdStr}
+            onChange={e => {
+              const v = e.target.value;
+              setQtdStr(v);
+              const num = parseInt(v);
+              if (!isNaN(num) && num >= 1) onChange('quantidade', num);
+            }}
+            onBlur={() => {
+              const num = parseInt(qtdStr);
+              if (isNaN(num) || num < 1) { setQtdStr('1'); onChange('quantidade', 1); }
+            }}
             inputProps={{ min: 1, style: { textAlign: 'center' } }}
             sx={{ width: 72 }}
             size="small"
@@ -264,14 +382,14 @@ function ConfigStep({
 
       {/* Qualidade */}
       <Box>
-        <Typography variant="subtitle2" fontWeight={600} gutterBottom>Qualidade de impressão</Typography>
+        <LabelComInfo label="Qualidade de impressão" onInfo={() => setInfoQuality(data.qualityPreset)} />
         {loadingQualidades ? <Skeleton variant="rectangular" height={120} sx={{ borderRadius: 2 }} /> : (
-          <Grid container spacing={2}>
+          <Box sx={{ display: 'flex', gap: 2 }}>
             {(['normal', 'qualidade', 'alta'] as const).map(preset => {
               const info = QUALITY_INFO[preset];
               const selected = data.qualityPreset === preset;
               return (
-                <Grid item xs={12} sm={4} key={preset}>
+                <Box key={preset} sx={{ flex: 1, minWidth: 0 }}>
                   <Card
                     onClick={() => handleSelectQuality(preset)}
                     sx={{
@@ -313,10 +431,113 @@ function ConfigStep({
                       </Box>
                     </CardContent>
                   </Card>
-                </Grid>
+                </Box>
               );
             })}
-          </Grid>
+          </Box>
+        )}
+      </Box>
+
+      {/* Parâmetros avançados — visível apenas para usuários avançados */}
+      {nivelUsuario === 'avancado' && data.idQualidade !== '' && (
+        <Box>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setExpandParams(v => !v)}
+            sx={{ borderRadius: 2, textTransform: 'none', borderColor: 'grey.400', color: 'text.secondary' }}
+          >
+            {expandParams ? '▲ Ocultar parâmetros avançados' : '▼ Personalizar parâmetros de impressão'}
+          </Button>
+          <Collapse in={expandParams}>
+            <Box sx={{ mt: 2, p: 2.5, bgcolor: 'grey.50', borderRadius: 2, border: '1px solid', borderColor: 'grey.300' }}>
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Alterar esses parâmetros muda o tempo de impressão e o uso de material — o orçamento calculado poderá ser diferente.
+              </Alert>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                <TextField
+                  label="Altura da camada (mm)"
+                  type="number"
+                  size="small"
+                  value={data.layerHeight}
+                  onChange={e => onChange('layerHeight', e.target.value)}
+                  inputProps={{ step: '0.01', min: mat?.camadaMin ?? 0.05, max: mat?.camadaMax ?? 0.35 }}
+                  sx={{ width: 170 }}
+                  helperText={mat?.camadaMin != null ? `${mat.camadaMin}–${mat.camadaMax}mm` : '0.05–0.35mm'}
+                />
+                <TextField
+                  label="Velocidade (mm/s)"
+                  type="number"
+                  size="small"
+                  value={data.printSpeed}
+                  onChange={e => onChange('printSpeed', e.target.value)}
+                  inputProps={{ step: '5', min: 10, max: 200 }}
+                  sx={{ width: 150 }}
+                  helperText="10–200 mm/s"
+                />
+                <TextField
+                  label="Paredes"
+                  type="number"
+                  size="small"
+                  value={data.perimeters}
+                  onChange={e => onChange('perimeters', Math.max(1, parseInt(e.target.value) || 2))}
+                  inputProps={{ step: '1', min: 1, max: 8 }}
+                  sx={{ width: 100 }}
+                  helperText="1–8"
+                />
+                <TextField
+                  label="Camadas topo"
+                  type="number"
+                  size="small"
+                  value={data.topLayers}
+                  onChange={e => onChange('topLayers', Math.max(1, parseInt(e.target.value) || 3))}
+                  inputProps={{ step: '1', min: 1, max: 10 }}
+                  sx={{ width: 120 }}
+                  helperText="1–10"
+                />
+                <TextField
+                  label="Camadas base"
+                  type="number"
+                  size="small"
+                  value={data.bottomLayers}
+                  onChange={e => onChange('bottomLayers', Math.max(1, parseInt(e.target.value) || 3))}
+                  inputProps={{ step: '1', min: 1, max: 10 }}
+                  sx={{ width: 120 }}
+                  helperText="1–10"
+                />
+              </Box>
+            </Box>
+          </Collapse>
+        </Box>
+      )}
+
+      {/* Preenchimento interno */}
+      <Box>
+        <LabelComInfo label="Preenchimento interno" onInfo={() => setInfoInfill(true)} />
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+          {INFILL_OPTIONS.map(opt => (
+            <Tooltip key={opt.value} title={`${opt.title} — ${opt.short}`} arrow placement="top">
+              <Button
+                variant={data.infill === opt.value ? 'contained' : 'outlined'}
+                size="small"
+                onClick={() => onChange('infill', opt.value)}
+                sx={{
+                  minWidth: 58,
+                  fontWeight: data.infill === opt.value ? 700 : 400,
+                  borderRadius: 2,
+                }}
+              >
+                {opt.label}
+              </Button>
+            </Tooltip>
+          ))}
+        </Box>
+        {selectedInfill && (
+          <Box sx={{ mt: 1, p: 1.5, bgcolor: 'grey.50', borderRadius: 2, border: '1px solid', borderColor: 'grey.200' }}>
+            <Typography variant="caption" color="text.secondary">
+              <strong>{selectedInfill.title}:</strong> {selectedInfill.short}
+            </Typography>
+          </Box>
         )}
       </Box>
 
@@ -329,7 +550,9 @@ function ConfigStep({
         onChange={e => onChange('description', e.target.value)}
       />
 
-      {/* Modal de informação de qualidade */}
+      {/* ── Dialogs de informação ─────────────────────────────── */}
+
+      {/* Dialog: Qualidade */}
       <Dialog open={infoQuality !== null} onClose={() => setInfoQuality(null)} maxWidth="xs" fullWidth>
         {infoQuality && (
           <>
@@ -359,6 +582,67 @@ function ConfigStep({
           </>
         )}
       </Dialog>
+
+      {/* Dialog: Material */}
+      <Dialog open={infoMaterial} onClose={() => setInfoMaterial(false)} maxWidth="sm" fullWidth>
+        <DialogTitle fontWeight={700}>Guia de materiais</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            O material determina as propriedades físicas da peça: resistência ao calor, flexibilidade, durabilidade e acabamento.
+          </Typography>
+          {(() => {
+            const tiposDB = new Set(materiais.map(m => m.tipo.split(/\s+/)[0].toUpperCase()));
+            return MATERIAL_TYPES_INFO
+              .filter(info => tiposDB.has(info.tipo.toUpperCase()))
+              .map((m, i) => (
+                <Box key={m.tipo} sx={{ py: 1.5, borderTop: i === 0 ? 'none' : '1px solid', borderColor: 'divider' }}>
+                  <Typography variant="subtitle2" fontWeight={700}>{m.tipo}</Typography>
+                  <Typography variant="body2" color="text.secondary">{m.desc}</Typography>
+                </Box>
+              ));
+          })()}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInfoMaterial(false)}>Fechar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Dialog: Preenchimento */}
+      <Dialog open={infoInfill} onClose={() => setInfoInfill(false)} maxWidth="sm" fullWidth>
+        <DialogTitle fontWeight={700}>O que é preenchimento interno?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            O preenchimento define quanto do interior da peça é sólido. Ele afeta diretamente a resistência, o peso, o tempo de impressão e o custo.
+          </Typography>
+          {INFILL_OPTIONS.map((opt, i) => (
+            <Box
+              key={opt.value}
+              sx={{
+                py: 1.5,
+                borderTop: i === 0 ? 'none' : '1px solid',
+                borderColor: 'divider',
+                cursor: 'pointer',
+                borderRadius: 1,
+                px: 1,
+                '&:hover': { bgcolor: 'grey.50' },
+              }}
+              onClick={() => { onChange('infill', opt.value); setInfoInfill(false); }}
+            >
+              <Box display="flex" alignItems="center" gap={1} mb={0.25}>
+                <Typography variant="subtitle2" fontWeight={700}>{opt.label}</Typography>
+                <Typography variant="subtitle2" color="text.secondary">— {opt.title}</Typography>
+                {data.infill === opt.value && (
+                  <Chip label="selecionado" size="small" color="primary" sx={{ ml: 'auto' }} />
+                )}
+              </Box>
+              <Typography variant="body2" color="text.secondary">{opt.detail}</Typography>
+            </Box>
+          ))}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInfoInfill(false)}>Fechar</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
@@ -366,6 +650,7 @@ function ConfigStep({
 // Step 3 — Confirmação
 function ConfirmationStep({ files, data, mat }: { files: File[]; data: OrderData; mat: Material | null }) {
   const info = QUALITY_INFO[data.qualityPreset];
+  const infillInfo = INFILL_OPTIONS.find(o => o.value === data.infill);
   return (
     <Paper variant="outlined" sx={{ p: 3, borderRadius: 3, bgcolor: 'grey.50' }}>
       <Typography variant="h6" fontWeight={700} gutterBottom>Confirme os detalhes do pedido</Typography>
@@ -384,6 +669,12 @@ function ConfirmationStep({ files, data, mat }: { files: File[]; data: OrderData
             secondary={info ? `${info.title} — ${info.description}` : data.qualityPreset}
           />
         </ListItem>
+        <ListItem>
+          <ListItemText
+            primary="Preenchimento interno"
+            secondary={infillInfo ? `${infillInfo.label} — ${infillInfo.title}: ${infillInfo.short}` : `${data.infill}%`}
+          />
+        </ListItem>
         {data.description && (
           <>
             <Divider component="li" />
@@ -398,12 +689,38 @@ function ConfirmationStep({ files, data, mat }: { files: File[]; data: OrderData
   );
 }
 
+// Estado passado via navigate() para re-pedido
+interface ReorderState {
+  idArquivo: number;
+  idMaterial: number;
+  idQualidade: number;
+  parametros?: Record<string, any> | null;
+  nome: string;
+  nomeArquivo?: string;
+}
+
 // Página principal
 export function NewOrderPage() {
   const navigate = useNavigate();
-  const [step, setStep]     = useState(0);
+  const location = useLocation();
+  const { nivel } = useAuth();
+
+  // Detecta re-pedido e modo admin
+  const reorder = (location.state as any)?.reorder as ReorderState | undefined;
+  const isAdmin = localStorage.getItem('user_type') === 'admin';
+
+  const [step, setStep]     = useState(reorder ? 1 : 0);
   const [files, setFiles]   = useState<File[]>([]);
-  const [data, setData]     = useState<OrderData>(EMPTY);
+  const [reorderArquivoId, setReorderArquivoId] = useState<number | null>(reorder?.idArquivo ?? null);
+  const [data, setData]     = useState<OrderData>({
+    ...EMPTY,
+    ...(reorder ? {
+      projectName: reorder.nome,
+      idMaterial:  reorder.idMaterial || '',
+      idQualidade: reorder.idQualidade || '',
+      ...(reorder.parametros ?? {}),
+    } : {}),
+  });
   const [materiais, setMateriais]   = useState<Material[]>([]);
   const [qualidades, setQualidades] = useState<QualidadeImpressao[]>([]);
   const [loadingMat, setLoadingMat]   = useState(true);
@@ -421,8 +738,8 @@ export function NewOrderPage() {
           setData(p => ({
             ...p,
             idMaterial: m.id, materialSpec: m.nome,
-            tempBico: midpoint(m.tempBicoMin, m.tempBicoMax, 0),
-            tempMesa: midpoint(m.tempMesaMin, m.tempMesaMax, 0),
+            tempBico: m.tempBicoRecomendada ?? midpoint(m.tempBicoMin, m.tempBicoMax, 0),
+            tempMesa: m.tempMesaRecomendada ?? midpoint(m.tempMesaMin, m.tempMesaMax, 0),
             fanMin: m.fanMin ?? 50, fanMax: m.fanMax ?? 100,
           }));
         }
@@ -437,13 +754,14 @@ export function NewOrderPage() {
         if (normal) {
           setData(p => ({
             ...p,
-            idQualidade: normal.id,
-            perimeters: normal.perimetros,
-            topLayers: normal.camadasTopo,
+            idQualidade:  normal.id,
+            perimeters:   normal.perimetros,
+            topLayers:    normal.camadasTopo,
             bottomLayers: normal.camadasBase,
             supportAngle: normal.anguloSuporte,
-            infill: String(normal.preenchimento),
-            printSpeed: String(normal.velocidade),
+            printSpeed:   String(normal.velocidade),
+            supports:     normal.suporte ? 'touching_buildplate' : 'none',
+            adhesion:     normal.adesao  ? 'brim'                : 'none',
           }));
         }
       })
@@ -454,7 +772,7 @@ export function NewOrderPage() {
     setData(p => ({ ...p, [field]: value }));
 
   const canNext = () => {
-    if (step === 0) return files.length > 0;
+    if (step === 0) return files.length > 0 || reorderArquivoId != null;
     if (step === 1) return data.projectName.trim() !== '' && data.idMaterial !== '' && data.idQualidade !== '';
     return true;
   };
@@ -462,16 +780,19 @@ export function NewOrderPage() {
   const mat = materiais.find(m => m.id === data.idMaterial) ?? null;
 
   const handleFinish = async () => {
-    if (files.length === 0 || !data.idMaterial || !data.idQualidade) {
-      setApiError('Selecione arquivo, material e qualidade.');
-      return;
-    }
+    if (!reorderArquivoId && files.length === 0) { setApiError('Selecione um arquivo STL.'); return; }
+    if (!data.idMaterial || !data.idQualidade) { setApiError('Selecione material e qualidade.'); return; }
     setSubmitting(true);
     setApiError(null);
     try {
-      const fd = new FormData();
-      files.forEach(f => fd.append('arquivo', f));
-      const { data: arq } = await api.post<{ id: number }>('/arquivos/upload', fd);
+      let idArquivo = reorderArquivoId;
+
+      if (!idArquivo) {
+        const fd = new FormData();
+        files.forEach(f => fd.append('arquivo', f));
+        const { data: arq } = await api.post<{ id: number }>('/arquivos/upload', fd);
+        idArquivo = arq.id;
+      }
 
       await api.post('/pedidos', {
         nome:        data.projectName,
@@ -479,7 +800,7 @@ export function NewOrderPage() {
         descricao:   data.description || null,
         idMaterial:  data.idMaterial,
         idQualidade: data.idQualidade,
-        idArquivo:   arq.id,
+        idArquivo,
         quantidade:  data.quantidade,
         parametros: {
           layerHeight:   data.layerHeight,
@@ -500,7 +821,7 @@ export function NewOrderPage() {
         },
       });
 
-      navigate('/quotes');
+      navigate(isAdmin ? '/admin/orders' : '/quotes');
     } catch (e: any) {
       setApiError(e.response?.data?.message ?? 'Erro ao enviar pedido.');
     } finally {
@@ -512,14 +833,28 @@ export function NewOrderPage() {
     <Container component="main" maxWidth="md" sx={{ mb: 4 }}>
       <Paper variant="outlined" sx={{ my: { xs: 3, md: 6 }, p: { xs: 2, md: 4 }, borderRadius: 3 }}>
         <Typography component="h1" variant="h4" fontWeight={700} align="center" gutterBottom>
-          Nova Cotação
+          {isAdmin ? 'Novo Pedido (Admin)' : 'Nova Cotação'}
         </Typography>
+        {isAdmin && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Pedido criado pelo admin vai direto para a fila — sem pagamento e sem revisão.
+          </Alert>
+        )}
 
         <Stepper activeStep={step} sx={{ pt: 3, pb: 5 }}>
           {STEPS.map(l => <Step key={l}><StepLabel>{l}</StepLabel></Step>)}
         </Stepper>
 
-        {step === 0 && <UploadStep files={files} onFiles={setFiles} />}
+        {step === 0 && !reorderArquivoId && <UploadStep files={files} onFiles={setFiles} />}
+        {step === 0 && reorderArquivoId && (
+          <Box sx={{ p: 4, textAlign: 'center', bgcolor: 'success.50', borderRadius: 3, border: '1px solid', borderColor: 'success.200' }}>
+            <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main', mb: 1 }} />
+            <Typography variant="h6" fontWeight={600}>Arquivo STL mantido do pedido original</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {reorder?.nomeArquivo ?? `Arquivo #${reorderArquivoId}`}
+            </Typography>
+          </Box>
+        )}
         {step === 1 && (
           <ConfigStep
             data={data}
@@ -528,6 +863,7 @@ export function NewOrderPage() {
             qualidades={qualidades}
             loadingMateriais={loadingMat}
             loadingQualidades={loadingQual}
+            nivelUsuario={nivel}
           />
         )}
         {step === 2 && (
