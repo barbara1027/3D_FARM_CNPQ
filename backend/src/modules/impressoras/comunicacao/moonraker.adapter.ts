@@ -172,4 +172,13 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
       detalhes: response.data,
     };
   }
+
+  async desligarAquecedores(impressora: Impressora): Promise<void> {
+    const conexao = resolverConexaoDaImpressora(impressora);
+    await axios.post(
+      `${conexao.baseUrl}/printer/gcode/script`,
+      { script: "M104 S0\nM140 S0" },
+      { headers: this.headers(impressora), timeout: conexao.timeoutMs },
+    );
+  }
 }

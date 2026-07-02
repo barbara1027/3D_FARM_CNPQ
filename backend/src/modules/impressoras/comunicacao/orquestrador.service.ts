@@ -151,6 +151,16 @@ export class ImpressoraOrquestradorService {
   async liberarImpressora(impressoraId: number): Promise<Impressora> {
     const impressora = await this.obterImpressoraOuFalhar(impressoraId);
 
+    // Desliga bico/mesa — a liberação pode acontecer antes do G-code de
+    // finalização rodar (impressão interrompida/marcada concluída no meio),
+    // então não dá pra confiar só no desligamento "natural" do G-code.
+    try {
+      const adapter = this.adapterFactory.getAdapter(impressora.api);
+      await adapter.desligarAquecedores(impressora);
+    } catch (err: any) {
+      console.error(`[ORQUESTRADOR] Falha ao desligar aquecedores da impressora ${impressoraId}:`, err.message);
+    }
+
     // Conclui o pedido vinculado, se existir
     if (impressora.idPedidoAtual) {
       try {
@@ -231,6 +241,12 @@ export class ImpressoraOrquestradorService {
     // Marca o pedido como concluído e coloca impressora em "Aguardando Remoção"
     if (impressora.idPedidoAtual) {
       try {
+        try {
+          const adapter = this.adapterFactory.getAdapter(impressora.api);
+          await adapter.desligarAquecedores(impressora);
+        } catch (err: any) {
+          console.error(`[ORQUESTRADOR] Falha ao desligar aquecedores da impressora ${impressora.id}:`, err.message);
+        }
         await this.pedidoRepository.update(impressora.idPedidoAtual, { status: "concluido" });
         await this.impressoraRepository.update(impressora.id, {
           status: "Aguardando Remoção",
