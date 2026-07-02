@@ -43,6 +43,13 @@ export interface ImpressoraOtimizacaoRow {
   capacidadeDiaHoras: number;
 }
 
+export interface ImpressoraCapacidadeRow {
+  id: number;
+  idMaterialAtual: number | null;
+  capacidadeDiaHoras: number;
+  horasUsadasHoje: number;
+}
+
 export interface CreateImpressoraRepositoryDTO {
   nome: string;
   modelo: string;
@@ -213,6 +220,49 @@ export class ImpressoraRepository {
 
   async delete(id: number): Promise<void> {
     await db.execute(`DELETE FROM impressoras WHERE id = ?`, [id]);
+  }
+
+  /**
+   * Impressoras ociosas com a capacidade diária já usada corrigida pra "hoje":
+   * se horas_usadas_hoje for de um dia anterior (data_referencia_capacidade
+   * != CURDATE()), considera 0 — sem precisar de job de reset à meia-noite.
+   */
+  async findOciosasComCapacidade(): Promise<ImpressoraCapacidadeRow[]> {
+    const [rows] = await db.execute(`
+      SELECT
+        id,
+        id_material AS idMaterialAtual,
+        capacidade_dia_horas AS capacidadeDiaHoras,
+        IF(data_referencia_capacidade = CURDATE(), horas_usadas_hoje, 0) AS horasUsadasHoje
+      FROM impressoras
+      WHERE status = 'Ociosa'
+      ORDER BY id ASC
+    `);
+    return (rows as any[]).map((row) => ({
+      id: Number(row.id),
+      idMaterialAtual: row.idMaterialAtual === null ? null : Number(row.idMaterialAtual),
+      capacidadeDiaHoras: Number(row.capacidadeDiaHoras),
+      horasUsadasHoje: Number(row.horasUsadasHoje),
+    }));
+  }
+
+  /**
+   * Registra que `horasConsumidas` de capacidade foram usadas hoje, e
+   * atualiza o material atualmente carregado. Se horas_usadas_hoje for de
+   * um dia anterior, reinicia a contagem em vez de somar.
+   */
+  async registrarUsoCapacidade(id: number, horasConsumidas: number, idMaterial: number | null): Promise<void> {
+    await db.execute(
+      `
+      UPDATE impressoras
+      SET
+        horas_usadas_hoje = IF(data_referencia_capacidade = CURDATE(), horas_usadas_hoje + ?, ?),
+        data_referencia_capacidade = CURDATE(),
+        id_material = ?
+      WHERE id = ?
+      `,
+      [horasConsumidas, horasConsumidas, idMaterial, id],
+    );
   }
 
   async findParaOtimizacao(): Promise<ImpressoraOtimizacaoRow[]> {

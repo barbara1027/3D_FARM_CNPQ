@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { app } from "./app";
+import { startSchedulers } from "./scheduler";
 
 const REQUIRED_ENV = ["DB_HOST", "DB_USER", "DB_NAME", "JWT_SECRET", "SESSION_SECRET"];
 
@@ -25,4 +26,5 @@ const PORT = Number(process.env.PORT ?? 3333);
 app.listen(PORT, () => {
   console.log(`\n Servidor rodando em http://localhost:${PORT}`);
   console.log(` Documentação Swagger em http://localhost:${PORT}/docs\n`);
+  startSchedulers();
 });

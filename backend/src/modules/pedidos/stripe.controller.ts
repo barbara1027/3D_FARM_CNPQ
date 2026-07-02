@@ -1,6 +1,10 @@
 import { Request, Response } from "express";
 import Stripe from "stripe";
 import { db } from "../../database/connection";
+import { ImpressoraService } from "../impressoras/impressoras.service";
+import { ImpressoraRepository } from "../impressoras/impressoras.repository";
+
+const impressoraService = new ImpressoraService(new ImpressoraRepository());
 
 function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -37,6 +41,10 @@ export const stripeWebhook = async (req: Request, res: Response) => {
           [pedidoId]
         );
         console.log(`[STRIPE] Pedido ${pedidoId} movido para na_fila.`);
+        // Gatilho da fila: tenta encaixar o pedido numa impressora ociosa agora mesmo.
+        impressoraService.tentarAtribuirAutomaticamente().catch((err) =>
+          console.error("[STRIPE] Falha na atribuição automática pós-pagamento:", err.message),
+        );
       } catch (err: any) {
         console.error(`[STRIPE] Falha ao atualizar pedido ${pedidoId}:`, err.message);
       }

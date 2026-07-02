@@ -4,6 +4,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   FormControl, InputLabel, Select, MenuItem, type SelectChangeEvent, Chip,
   List, ListItemButton, ListItemText, Divider, Paper, Tooltip, LinearProgress,
+  Menu,
 } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
@@ -16,9 +17,11 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
+import LayersIcon from '@mui/icons-material/Layers';
 import api from '../../services/api';
 import { type Impressora, type ApiProtocol, type PrinterStatus } from '../../types/Impressora';
 import { type Pedido } from '../../types/Pedido';
+import { type Material } from '../../types/Material';
 import { normalizePedido } from '../../utils/normalize';
 
 interface ProgressoData {
@@ -57,10 +60,16 @@ function chipColor(s: PrinterStatus): 'success' | 'warning' | 'error' | 'default
 
 export function AdminPrintersPage() {
   const [impressoras, setImpressoras]   = useState<Impressora[]>([]);
+  const [materiais, setMateriais]       = useState<Material[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
   const [manageOpen, setManageOpen]     = useState(false);
   const [progressoMap, setProgressoMap] = useState<Record<number, ProgressoData>>({});
+
+  // Menu de troca de material
+  const [materialMenuAnchor, setMaterialMenuAnchor] = useState<HTMLElement | null>(null);
+  const [materialMenuImp, setMaterialMenuImp]        = useState<Impressora | null>(null);
+  const [trocandoMaterial, setTrocandoMaterial]      = useState(false);
 
   // CRUD state
   const [formOpen, setFormOpen]   = useState(false);
@@ -96,7 +105,38 @@ export function AdminPrintersPage() {
     });
   }, []);
 
-  useEffect(() => { fetchImpressoras(); }, []);
+  useEffect(() => {
+    fetchImpressoras();
+    api.get<Material[]>('/materiais').then(r => setMateriais(r.data)).catch(() => setMateriais([]));
+  }, []);
+
+  const nomeMaterial = (idMaterial: number | null): string =>
+    idMaterial == null ? 'Sem material' : materiais.find(m => m.id === idMaterial)?.nome ?? `#${idMaterial}`;
+
+  const abrirMenuMaterial = (e: React.MouseEvent<HTMLElement>, imp: Impressora) => {
+    e.stopPropagation();
+    setMaterialMenuAnchor(e.currentTarget);
+    setMaterialMenuImp(imp);
+  };
+
+  const fecharMenuMaterial = () => {
+    setMaterialMenuAnchor(null);
+    setMaterialMenuImp(null);
+  };
+
+  const handleTrocarMaterial = async (idMaterial: number | null) => {
+    if (!materialMenuImp) return;
+    setTrocandoMaterial(true);
+    try {
+      await api.put(`/impressoras/${materialMenuImp.id}`, { idMaterial });
+      fetchImpressoras();
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Erro ao trocar material.');
+    } finally {
+      setTrocandoMaterial(false);
+      fecharMenuMaterial();
+    }
+  };
 
   useEffect(() => {
     if (impressoras.some(i => i.status === 'Imprimindo')) {
@@ -231,12 +271,25 @@ export function AdminPrintersPage() {
               display: 'flex', flexDirection: 'column', gap: 1.5,
             }}
           >
-            {/* Nome e modelo */}
-            <Box>
-              <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
-                {imp.nome}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">{imp.modelo}</Typography>
+            {/* Nome, modelo e material atribuído */}
+            <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap={1}>
+              <Box>
+                <Typography variant="h6" fontWeight="bold" lineHeight={1.2}>
+                  {imp.nome}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">{imp.modelo}</Typography>
+              </Box>
+              <Tooltip title="Clique para trocar o material carregado">
+                <Chip
+                  icon={<LayersIcon fontSize="small" />}
+                  label={nomeMaterial(imp.idMaterial)}
+                  size="small"
+                  variant={imp.idMaterial == null ? 'outlined' : 'filled'}
+                  color={imp.idMaterial == null ? 'default' : 'primary'}
+                  onClick={(e) => abrirMenuMaterial(e, imp)}
+                  sx={{ cursor: 'pointer', flexShrink: 0 }}
+                />
+              </Tooltip>
             </Box>
 
             {/* Status */}
@@ -429,6 +482,31 @@ export function AdminPrintersPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Menu de troca de material da impressora */}
+      <Menu
+        anchorEl={materialMenuAnchor}
+        open={!!materialMenuAnchor}
+        onClose={fecharMenuMaterial}
+      >
+        <MenuItem disabled={trocandoMaterial} onClick={() => handleTrocarMaterial(null)}>
+          <em>Sem material definido</em>
+        </MenuItem>
+        <Divider />
+        {materiais.map(m => (
+          <MenuItem
+            key={m.id}
+            disabled={trocandoMaterial}
+            selected={materialMenuImp?.idMaterial === m.id}
+            onClick={() => handleTrocarMaterial(m.id)}
+          >
+            {m.nome} ({m.tipo})
+          </MenuItem>
+        ))}
+        {materiais.length === 0 && (
+          <MenuItem disabled>Nenhum material cadastrado</MenuItem>
+        )}
+      </Menu>
 
       {/* Dialog atribuir pedido */}
       <Dialog open={!!atribuirImp} onClose={() => setAtribuirImp(null)} maxWidth="sm" fullWidth>
