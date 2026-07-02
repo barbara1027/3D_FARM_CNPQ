@@ -1,7 +1,12 @@
 import axios from 'axios';
 
+// Usa o mesmo host que serviu o frontend (localhost, IP da VM na rede local,
+// etc.), só trocando a porta pra do backend — assim funciona tanto acessando
+// de dentro da máquina quanto de outro dispositivo na mesma rede.
+const apiBaseUrl = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:3333`;
+
 const api = axios.create({
-  baseURL: 'http://localhost:3333',
+  baseURL: apiBaseUrl,
 });
 
 // Injeta token em todas as requisições

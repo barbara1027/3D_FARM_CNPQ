@@ -23,8 +23,20 @@ if (process.env.FRONTEND_URL && !corsOrigins.includes(process.env.FRONTEND_URL))
   corsOrigins.push(process.env.FRONTEND_URL);
 }
 
+// Além do allowlist fixo, aceita qualquer origem nas portas do Vite (5173/5174)
+// independente do host — necessário quando o frontend é acessado pela rede
+// local (ex.: alunos/professores testando a partir de outras máquinas, onde
+// a origem é o IP da VM, não "localhost").
+const VITE_PORT_REGEX = /^https?:\/\/[^/]+:517[34]$/;
+
 app.use(cors({
-  origin: corsOrigins,
+  origin: (origin, callback) => {
+    if (!origin || corsOrigins.includes(origin) || VITE_PORT_REGEX.test(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origem não permitida pelo CORS: ${origin}`));
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
