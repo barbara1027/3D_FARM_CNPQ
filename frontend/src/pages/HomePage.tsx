@@ -249,7 +249,7 @@ export function HomePage() {
         </Typography>
         <Grid container spacing={3}>
           {STL_SITES.map((site) => (
-            <Grid item xs={12} sm={6} md={3} key={site.name}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }} key={site.name}>
               <Card
                 sx={{
                   height: '100%', borderRadius: 3,
@@ -296,7 +296,7 @@ export function HomePage() {
           </Typography>
           <Grid container spacing={2}>
             {POPULAR_MODELS.map((model) => (
-              <Grid item xs={12} sm={4} key={model.name}>
+              <Grid size={{ xs: 12, sm: 4 }} key={model.name}>
                 <Card
                   sx={{
                     height: '100%',

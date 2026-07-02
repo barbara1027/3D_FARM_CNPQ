@@ -42,6 +42,7 @@ const emptyForm: FormData = {
   nome: '', modelo: '', status: 'Ociosa',
   ip: null, baseUrl: null, api: 'DUMMY', api_key: null,
   timeoutMs: 15000, idMaterial: null,
+  eficiencia: 1, taxaErroRecente: 0, tempoParaFicarLivreHoras: 0, capacidadeDiaHoras: 8,
 };
 
 function borderColor(s: PrinterStatus): string {
