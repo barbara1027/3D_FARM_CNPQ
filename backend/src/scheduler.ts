@@ -22,6 +22,35 @@ export async function reescalonarFila(): Promise<void> {
   }
 }
 
+const INTERVALO_ATRIBUICAO_MS = 30_000;
+let atribuicaoEmAndamento = false;
+
+/**
+ * Rede de segurança de curto prazo: a cada 30s, tenta encaixar pedidos
+ * na_fila em impressoras ociosas. Cobre pedidos novos e mudanças de estado
+ * (impressora liberada) que por algum motivo não dispararam a tentativa via
+ * evento (webhook do Stripe, confirmação de remoção) — sem depender só do
+ * cron diário.
+ */
+function iniciarAtribuicaoPeriodica(): void {
+  setInterval(async () => {
+    if (atribuicaoEmAndamento) return;
+    atribuicaoEmAndamento = true;
+    try {
+      const atribuicoes = await impressoraService.tentarAtribuirAutomaticamente();
+      if (atribuicoes.length > 0) {
+        console.log(`[Scheduler] Atribuição periódica: ${atribuicoes.length} pedido(s) atribuído(s).`);
+      }
+    } catch (e: any) {
+      console.error("[Scheduler] Erro na atribuição periódica:", e.message);
+    } finally {
+      atribuicaoEmAndamento = false;
+    }
+  }, INTERVALO_ATRIBUICAO_MS);
+
+  console.log(`[Scheduler] Atribuição automática periódica a cada ${INTERVALO_ATRIBUICAO_MS / 1000}s.`);
+}
+
 export function startSchedulers(): void {
   const envExpr = process.env.CRON_REESCALONAMENTO ?? "0 6 * * *";
   const expr = cron.validate(envExpr) ? envExpr : "0 6 * * *";
@@ -38,4 +67,6 @@ export function startSchedulers(): void {
   });
 
   console.log(`[Scheduler] Reescalonamento diário agendado: ${expr}`);
+
+  iniciarAtribuicaoPeriodica();
 }
