@@ -63,6 +63,30 @@ export class ImpressoraOrquestradorService {
     }
   }
 
+  /**
+   * Versão "silenciosa" de sincronizarStatus, usada pelo polling de progresso
+   * do cliente (chamado a cada poucos segundos). Persiste status/erro real da
+   * impressora — sem isso, uma impressora que trava ou entra em erro durante
+   * a impressão nunca é refletida no banco, e o pedido fica preso mostrando
+   * "em_impressao" indefinidamente. Não loga evento nem envia e-mail a cada
+   * chamada para não gerar ruído/spam com o polling frequente.
+   */
+  async sincronizarStatusSilencioso(impressoraId: number): Promise<PrinterRuntimeStatus | null> {
+    const impressora = await this.obterImpressoraOuFalhar(impressoraId);
+    const adapter = this.adapterFactory.getAdapter(impressora.api);
+
+    try {
+      const status = await adapter.getStatus(impressora);
+      await this.persistirStatusSincronizado(impressoraId, status);
+      await this.sincronizarPedidoComStatus(impressora, status);
+      return status;
+    } catch (error: any) {
+      const mensagem = error?.message ?? "Falha ao sincronizar status da impressora.";
+      await this.impressoraRepository.markError(impressoraId, mensagem);
+      return null;
+    }
+  }
+
   async atribuirPedido(impressoraId: number, pedidoId: number): Promise<AssignPrintJobResult> {
     const impressora = await this.obterImpressoraOuFalhar(impressoraId);
 
