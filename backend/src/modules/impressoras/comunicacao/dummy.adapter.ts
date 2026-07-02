@@ -80,4 +80,8 @@ export class DummyPrinterAdapter implements IPrinterCommunicationAdapter {
       detalhes: { simulado: true },
     };
   }
+
+  async desligarAquecedores(_impressora: Impressora): Promise<void> {
+    // Modo DUMMY: nada pra desligar.
+  }
 }

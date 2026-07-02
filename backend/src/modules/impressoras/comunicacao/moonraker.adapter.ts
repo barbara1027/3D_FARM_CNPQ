@@ -25,6 +25,37 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
     };
   }
 
+  /**
+   * Algumas impressoras (ex.: firmwares "tudo em um" tipo Creality K1/Qidi)
+   * já vêm com macros próprias de START_PRINT/END_PRINT que fazem limpeza de
+   * bico, nivelamento de mesa e desligamento seguro — muito mais completas
+   * que o G-code genérico que o PrusaSlicer gera sozinho. Quando existem,
+   * usamos elas; quando não existem (impressora sem essas macros), cai de
+   * volta pro comportamento padrão sem quebrar nada.
+   */
+  private async temMacro(impressora: Impressora, nomeMacro: string): Promise<boolean> {
+    try {
+      const conexao = resolverConexaoDaImpressora(impressora);
+      const response = await axios.get(`${conexao.baseUrl}/printer/objects/list`, {
+        headers: this.headers(impressora),
+        timeout: conexao.timeoutMs,
+      });
+      const objetos: string[] = response.data?.result?.objects ?? [];
+      return objetos.includes(`gcode_macro ${nomeMacro}`);
+    } catch {
+      return false;
+    }
+  }
+
+  private async rodarGcode(impressora: Impressora, script: string): Promise<void> {
+    const conexao = resolverConexaoDaImpressora(impressora);
+    await axios.post(
+      `${conexao.baseUrl}/printer/gcode/script`,
+      { script },
+      { headers: this.headers(impressora), timeout: conexao.timeoutMs },
+    );
+  }
+
   async healthCheck(impressora: Impressora): Promise<PrinterHealthCheckResult> {
     const conexao = resolverConexaoDaImpressora(impressora);
     const response = await axios.get(
@@ -76,6 +107,26 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
     } catch (err: any) {
       if (err.message.includes("Klippy")) throw err;
       console.warn(`[MoonrakerAdapter] Não foi possível verificar o estado do Klippy: ${err.message}`);
+    }
+
+    // Se a impressora tiver macro própria de início (limpeza de bico, nivelamento
+    // de mesa, etc.), chama ela com as temperaturas extraídas do cabeçalho do
+    // G-code, antes de mandar o arquivo. Melhor esforço — se falhar por qualquer
+    // motivo, segue com o fluxo normal (o G-code já tem seu próprio aquecimento).
+    if (await this.temMacro(impressora, "START_PRINT")) {
+      try {
+        const header = payload.conteudo.subarray(0, 4000).toString("utf-8");
+        const extruderTemp = header.match(/^; first_layer_temperature = (\d+)/m)?.[1];
+        const bedTemp = header.match(/^; first_layer_bed_temperature = (\d+)/m)?.[1];
+        if (extruderTemp && bedTemp) {
+          console.log(`[MoonrakerAdapter] Chamando START_PRINT (BED_TEMP=${bedTemp} EXTRUDER_TEMP=${extruderTemp})`);
+          await this.rodarGcode(impressora, `START_PRINT BED_TEMP=${bedTemp} EXTRUDER_TEMP=${extruderTemp}`);
+        } else {
+          console.warn("[MoonrakerAdapter] START_PRINT existe mas não achei as temperaturas no cabeçalho do G-code — pulando.");
+        }
+      } catch (err: any) {
+        console.warn(`[MoonrakerAdapter] Falha ao chamar START_PRINT, seguindo sem ela: ${err.message}`);
+      }
     }
 
     const formData = new FormData();
@@ -171,5 +222,17 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
       tempoRestanteS,
       detalhes: response.data,
     };
+  }
+
+  async desligarAquecedores(impressora: Impressora): Promise<void> {
+    if (await this.temMacro(impressora, "END_PRINT")) {
+      try {
+        await this.rodarGcode(impressora, "END_PRINT");
+        return;
+      } catch (err: any) {
+        console.warn(`[MoonrakerAdapter] Falha ao chamar END_PRINT, usando desligamento genérico: ${err.message}`);
+      }
+    }
+    await this.rodarGcode(impressora, "M104 S0\nM140 S0");
   }
 }

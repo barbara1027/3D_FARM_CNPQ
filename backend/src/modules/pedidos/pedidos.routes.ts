@@ -96,15 +96,25 @@ pedidosRoutes.post("/:id/aprovar", authMiddleware, adminMiddleware,
       }
 
       vals.push(id);
-      await db.execute(
+      const [result]: any = await db.execute(
         `UPDATE pedidos SET ${campos.join(", ")} WHERE id = ? AND status = 'aguardando_revisao'`,
         vals
       );
 
+      if (result.affectedRows === 0) {
+        const [rows]: any = await db.execute(
+          "SELECT status FROM pedidos WHERE id = ? LIMIT 1", [id]
+        );
+        if (!rows?.length) return res.status(404).json({ message: "Pedido não encontrado." });
+        return res.status(409).json({
+          message: `Pedido não pode ser aprovado: está em '${rows[0].status}', não em 'aguardando_revisao'.`,
+        });
+      }
+
       const [rows]: any = await db.execute(
         "SELECT id, status, preco FROM pedidos WHERE id = ? LIMIT 1", [id]
       );
-      return res.status(200).json(rows[0] ?? { message: "Pedido não estava em aguardando_revisao." });
+      return res.status(200).json(rows[0]);
     } catch (e: any) {
       return res.status(500).json({ message: e.message });
     }
@@ -261,13 +271,27 @@ pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
     const id = Number(req.params.id);
     if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
     try {
+      const [existing]: any = await db.execute(
+        "SELECT status, gcode_path FROM pedidos WHERE id = ? LIMIT 1", [id]
+      );
+      if (!existing?.length) return res.status(404).json({ message: "Pedido não encontrado." });
+
+      const { status, gcode_path } = existing[0];
+      if (!gcode_path) {
+        return res.status(409).json({
+          message: "Pedido não pode ser reimpresso: G-code ainda não foi gerado para ele.",
+        });
+      }
+      if (status === "cancelado") {
+        return res.status(409).json({ message: "Pedido cancelado não pode ser reimpresso." });
+      }
+
       await db.execute(
         "UPDATE pedidos SET status = 'na_fila', updated_at = NOW() WHERE id = ?", [id]
       );
       const [rows]: any = await db.execute(
         "SELECT id, status FROM pedidos WHERE id = ? LIMIT 1", [id]
       );
-      if (!rows?.length) return res.status(404).json({ message: "Pedido não encontrado." });
       return res.status(200).json(rows[0]);
     } catch (e: any) {
       return res.status(500).json({ message: e.message });

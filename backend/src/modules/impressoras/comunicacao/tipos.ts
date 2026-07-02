@@ -43,4 +43,13 @@ export interface IPrinterCommunicationAdapter {
   healthCheck(impressora: Impressora): Promise<PrinterHealthCheckResult>;
   uploadAndStart(impressora: Impressora, payload: PrinterJobPayload): Promise<PrinterStartJobResult>;
   getStatus(impressora: Impressora): Promise<PrinterRuntimeStatus>;
+  /**
+   * Desliga bico e mesa. Chamado sempre que um job é encerrado pelo nosso
+   * sistema (concluído automaticamente, liberado manualmente pelo admin, etc).
+   * Necessário porque o desligamento "natural" vem do G-code de finalização
+   * do PrusaSlicer — se a impressão for interrompida/marcada como concluída
+   * antes de chegar no fim do arquivo, esse G-code nunca roda e o bico fica
+   * quente e parado, escorrendo/entupindo até o próximo job.
+   */
+  desligarAquecedores(impressora: Impressora): Promise<void>;
 }

@@ -63,6 +63,30 @@ export class ImpressoraOrquestradorService {
     }
   }
 
+  /**
+   * Versão "silenciosa" de sincronizarStatus, usada pelo polling de progresso
+   * do cliente (chamado a cada poucos segundos). Persiste status/erro real da
+   * impressora — sem isso, uma impressora que trava ou entra em erro durante
+   * a impressão nunca é refletida no banco, e o pedido fica preso mostrando
+   * "em_impressao" indefinidamente. Não loga evento nem envia e-mail a cada
+   * chamada para não gerar ruído/spam com o polling frequente.
+   */
+  async sincronizarStatusSilencioso(impressoraId: number): Promise<PrinterRuntimeStatus | null> {
+    const impressora = await this.obterImpressoraOuFalhar(impressoraId);
+    const adapter = this.adapterFactory.getAdapter(impressora.api);
+
+    try {
+      const status = await adapter.getStatus(impressora);
+      await this.persistirStatusSincronizado(impressoraId, status);
+      await this.sincronizarPedidoComStatus(impressora, status);
+      return status;
+    } catch (error: any) {
+      const mensagem = error?.message ?? "Falha ao sincronizar status da impressora.";
+      await this.impressoraRepository.markError(impressoraId, mensagem);
+      return null;
+    }
+  }
+
   async atribuirPedido(impressoraId: number, pedidoId: number): Promise<AssignPrintJobResult> {
     const impressora = await this.obterImpressoraOuFalhar(impressoraId);
 
@@ -126,6 +150,16 @@ export class ImpressoraOrquestradorService {
 
   async liberarImpressora(impressoraId: number): Promise<Impressora> {
     const impressora = await this.obterImpressoraOuFalhar(impressoraId);
+
+    // Desliga bico/mesa — a liberação pode acontecer antes do G-code de
+    // finalização rodar (impressão interrompida/marcada concluída no meio),
+    // então não dá pra confiar só no desligamento "natural" do G-code.
+    try {
+      const adapter = this.adapterFactory.getAdapter(impressora.api);
+      await adapter.desligarAquecedores(impressora);
+    } catch (err: any) {
+      console.error(`[ORQUESTRADOR] Falha ao desligar aquecedores da impressora ${impressoraId}:`, err.message);
+    }
 
     // Conclui o pedido vinculado, se existir
     if (impressora.idPedidoAtual) {
@@ -207,6 +241,12 @@ export class ImpressoraOrquestradorService {
     // Marca o pedido como concluído e coloca impressora em "Aguardando Remoção"
     if (impressora.idPedidoAtual) {
       try {
+        try {
+          const adapter = this.adapterFactory.getAdapter(impressora.api);
+          await adapter.desligarAquecedores(impressora);
+        } catch (err: any) {
+          console.error(`[ORQUESTRADOR] Falha ao desligar aquecedores da impressora ${impressora.id}:`, err.message);
+        }
         await this.pedidoRepository.update(impressora.idPedidoAtual, { status: "concluido" });
         await this.impressoraRepository.update(impressora.id, {
           status: "Aguardando Remoção",

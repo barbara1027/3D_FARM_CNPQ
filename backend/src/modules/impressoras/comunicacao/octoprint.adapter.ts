@@ -104,4 +104,19 @@ export class OctoprintAdapter implements IPrinterCommunicationAdapter {
       detalhes: response.data,
     };
   }
+
+  async desligarAquecedores(impressora: Impressora): Promise<void> {
+    const conexao = resolverConexaoDaImpressora(impressora);
+    const headers = impressora.api_key ? { "X-Api-Key": impressora.api_key } : {};
+    await axios.post(
+      `${conexao.baseUrl}/api/printer/tool`,
+      { command: "target", targets: { tool0: 0 } },
+      { headers, timeout: conexao.timeoutMs },
+    );
+    await axios.post(
+      `${conexao.baseUrl}/api/printer/bed`,
+      { command: "target", target: 0 },
+      { headers, timeout: conexao.timeoutMs },
+    );
+  }
 }

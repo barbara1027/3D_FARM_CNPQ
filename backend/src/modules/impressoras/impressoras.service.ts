@@ -133,18 +133,14 @@ export class ImpressoraService {
   }
 
   async obterProgresso(id: number): Promise<ProgressoImpressora> {
-    const impressora = await this.impressoraRepository.findById(id);
-    if (!impressora) throw new Error("Impressora não encontrada.");
-    const adapter = this.adapterFactory.getAdapter(impressora.api);
-    try {
-      const status = await adapter.getStatus(impressora);
-      return {
-        progressoPct: status.progressoPct ?? null,
-        tempoRestanteS: status.tempoRestanteS ?? null,
-        statusFisico: status.statusFisico,
-      };
-    } catch {
+    const status = await this.orquestrador.sincronizarStatusSilencioso(id);
+    if (!status) {
       return { progressoPct: null, tempoRestanteS: null, statusFisico: "desconhecido" };
     }
+    return {
+      progressoPct: status.progressoPct ?? null,
+      tempoRestanteS: status.tempoRestanteS ?? null,
+      statusFisico: status.statusFisico,
+    };
   }
 }
