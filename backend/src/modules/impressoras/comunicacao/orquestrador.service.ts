@@ -87,6 +87,66 @@ export class ImpressoraOrquestradorService {
     }
   }
 
+  /**
+   * Gatilho da fila: tenta atribuir automaticamente os pedidos aguardando
+   * (na_fila) às impressoras ociosas que ainda têm capacidade diária sobrando.
+   * Chamado sempre que um pedido novo entra na fila (pagamento confirmado) ou
+   * uma impressora fica livre — assim os pedidos vão entrando ao longo do dia
+   * conforme há espaço, e o que não couber fica naturalmente pra amanhã,
+   * quando a capacidade usada é considerada zerada de novo.
+   *
+   * Prioridade paga fura a fila (vai primeiro); o resto segue FIFO. Entre as
+   * impressoras com capacidade suficiente, prefere a que já está com o mesmo
+   * material carregado (evita troca desnecessária).
+   */
+  async tentarAtribuirAutomaticamente(): Promise<{ pedidoId: number; impressoraId: number }[]> {
+    const atribuicoes: { pedidoId: number; impressoraId: number }[] = [];
+
+    let impressoras = await this.impressoraRepository.findOciosasComCapacidade();
+    if (impressoras.length === 0) return atribuicoes;
+
+    const pedidosBrutos = await this.pedidoRepository.findPendentesParaOtimizacao();
+    const pedidos = [...pedidosBrutos].sort((a, b) => {
+      if (a.prioridadePaga !== b.prioridadePaga) return a.prioridadePaga ? -1 : 1;
+      return new Date(a.criadoEm).getTime() - new Date(b.criadoEm).getTime();
+    });
+
+    for (const pedido of pedidos) {
+      if (!pedido.tempoGcodeHoras || pedido.tempoGcodeHoras <= 0) continue;
+
+      const candidatas = impressoras
+        .filter((imp) => imp.horasUsadasHoje + pedido.tempoGcodeHoras <= imp.capacidadeDiaHoras)
+        .sort((a, b) => {
+          const custoA = a.idMaterialAtual === pedido.idMaterial ? 0 : 1;
+          const custoB = b.idMaterialAtual === pedido.idMaterial ? 0 : 1;
+          if (custoA !== custoB) return custoA - custoB;
+          return a.horasUsadasHoje - b.horasUsadasHoje;
+        });
+
+      const escolhida = candidatas[0];
+      if (!escolhida) continue;
+
+      try {
+        await this.atribuirPedido(escolhida.id, pedido.id);
+        atribuicoes.push({ pedidoId: pedido.id, impressoraId: escolhida.id });
+        // Atualiza estado em memória pra não tentar usar a mesma impressora
+        // de novo pros próximos pedidos deste loop.
+        impressoras = impressoras.filter((imp) => imp.id !== escolhida.id);
+        if (impressoras.length === 0) break;
+      } catch (err: any) {
+        // Falha é do pedido (G-code ausente, etc.), não da impressora — ela
+        // continua candidata pros próximos pedidos da fila. Só pula este pedido.
+        console.error(`[ORQUESTRADOR] Falha ao autoatribuir pedido ${pedido.id} à impressora ${escolhida.id}:`, err.message);
+      }
+    }
+
+    if (atribuicoes.length > 0) {
+      console.log(`[ORQUESTRADOR] Atribuição automática: ${atribuicoes.length} pedido(s) enviado(s) para impressão.`);
+    }
+
+    return atribuicoes;
+  }
+
   async atribuirPedido(impressoraId: number, pedidoId: number): Promise<AssignPrintJobResult> {
     const impressora = await this.obterImpressoraOuFalhar(impressoraId);
 
@@ -126,6 +186,7 @@ export class ImpressoraOrquestradorService {
       }
 
       await this.impressoraRepository.markPrinting(impressoraId, resultado.jobRemotoId, resultado.nomeArquivoRemoto ?? resultado.mensagem, pedidoId);
+      await this.impressoraRepository.registrarUsoCapacidade(impressoraId, pedido.tempoGcodeHoras ?? 0, pedido.idMaterial);
       await this.pedidoRepository.update(pedidoId, { status: "em_impressao" });
       await this.impressoraRepository.addEvent(
         impressoraId,

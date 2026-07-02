@@ -29,13 +29,14 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 3d-farm/
 ├── CLAUDE.md
 ├── backend/
-│   ├── schema.sql                    ← schema base
-│   ├── migration_pipeline.sql        ← colunas do pipeline (obrigatória)
+│   ├── schema.sql                    ← schema base (já inclui pipeline e impressora_eventos)
+│   ├── migration_quantidade_temp.sql ← pré-requisito de temp_material_infill e parametros_avancados
 │   ├── migration_nivel_usuario.sql   ← campo nivel na tabela usuarios
-│   ├── migration_scheduler_columns.sql ← colunas de ETA/fila nos pedidos
+│   ├── migration_scheduler_columns.sql ← colunas de ETA/fila nos pedidos e impressoras
 │   ├── migration_temp_material_infill.sql
 │   ├── migration_parametros_avancados.sql
 │   ├── migration_arquivos_id_pedido.sql
+│   ├── migration_capacidade_diaria.sql ← horas_usadas_hoje/data_referencia_capacidade (gatilho automático da fila)
 │   ├── .env
 │   ├── package.json
 │   ├── uploads/                      ← STLs enviados pelos clientes
@@ -160,15 +161,18 @@ mysql -u root -e "CREATE DATABASE IF NOT EXISTS 3d_farm;"
 # 2. Schema base
 mysql -u root 3d_farm < backend/schema.sql
 
-# 3. Migrations — rodar em ordem
-mysql -u root 3d_farm < backend/migration_pipeline.sql
+# 3. Migrations — rodar em ordem (quantidade_temp é pré-requisito de
+#    temp_material_infill e parametros_avancados — sem ela, as duas falham)
+mysql -u root 3d_farm < backend/migration_quantidade_temp.sql
 mysql -u root 3d_farm < backend/migration_nivel_usuario.sql
 mysql -u root 3d_farm < backend/migration_scheduler_columns.sql
 mysql -u root 3d_farm < backend/migration_temp_material_infill.sql
 mysql -u root 3d_farm < backend/migration_parametros_avancados.sql
 mysql -u root 3d_farm < backend/migration_arquivos_id_pedido.sql
+mysql -u root 3d_farm < backend/migration_capacidade_diaria.sql
 
 # 4. Tabelas auxiliares (se ainda não existirem)
+mysql -u root 3d_farm < backend/src/database/tables/007_create_pedido_impressora.sql
 mysql -u root 3d_farm < backend/src/database/tables/009_create_chat_mensagens.sql
 ```
 
@@ -344,15 +348,29 @@ Tabela: `chat_mensagens` com campos `id_pedido`, `id_remetente`, `tipo_remetente
 
 ## Fila de impressão
 
-Módulo desenvolvido por João (branch `fila-impressao-limpa`, commit `e1184da`).
+Módulo desenvolvido por João (branch `fila-impressao-limpa`, commit `e1184da`), com atribuição
+automática adicionada posteriormente.
 
-- `FilaService.reescalonarFilaVirtual()` — redistribui pedidos `na_fila` entre impressoras disponíveis
-- `FilaOtimizacaoService` — otimização avançada com ETA, buffer de segurança, prioridade
-- `EtaEntregaService` — calcula prazo estimado de entrega
-- `scheduler.ts` — cron diário às 6h (configurável por `CRON_REESCALONAMENTO`)
-- `POST /fila/reescalonar` — endpoint para acionar reescalonamento manualmente (admin)
+- `FilaService.reescalonarFilaVirtual()` — simula um plano ideal do dia inteiro (heurística de
+  máquinas paralelas com setup dependente de sequência) e grava em `pedido_impressora`. É uma
+  ferramenta de **planejamento/visibilidade**, recomeça do zero a cada chamada — não executa nada.
+- `FilaOtimizacaoService` — o algoritmo de otimização em si (ETA, buffer de risco, prioridade paga
+  furando fila condicionalmente sem atrasar ninguém).
+- `EtaEntregaService` — calcula prazo estimado de entrega.
+- `ImpressoraOrquestradorService.tentarAtribuirAutomaticamente()` — **gatilho real**: pega pedidos
+  `na_fila` (prioridade paga primeiro, depois FIFO) e atribui à impressora ociosa com capacidade
+  diária sobrando (`impressoras.horas_usadas_hoje` vs `capacidade_dia_horas`, corrigido por dia via
+  `data_referencia_capacidade` — sem precisar de job de reset à meia-noite). Prefere impressora já
+  carregada com o mesmo material do pedido. O que não couber na capacidade do dia fica pra amanhã.
+  Chamado: (1) logo após o webhook do Stripe confirmar pagamento, (2) sempre que uma impressora é
+  liberada (`confirmar-remocao`), (3) como varredura de segurança no cron diário.
+- `scheduler.ts` — cron diário às 6h (configurável por `CRON_REESCALONAMENTO`): roda
+  `reescalonarFilaVirtual()` (plano informativo) + `tentarAtribuirAutomaticamente()` (varredura).
+- `POST /fila/reescalonar` — aciona o reescalonamento (plano) manualmente (admin).
 
-**Não existe frontend para gerenciamento da fila.**
+**Ainda não existe frontend pra visualizar o plano** (`pedido_impressora`) — só a atribuição real
+(`impressoras.idPedidoAtual`, visível em AdminPrintersPage) e o material atual de cada impressora
+(chip clicável no canto superior direito de cada card, em AdminPrintersPage).
 
 ---
 
@@ -431,8 +449,8 @@ O `NotificationsDrawer` no painel admin mostra automaticamente impressoras com `
 **1. Frontend do Chat**
 O backend de chat está completo mas não existe nenhuma página ou componente no frontend. O cliente não consegue enviar mensagens ao admin, e o admin não consegue responder. Esta é a lacuna mais impactante para o usuário final.
 
-**2. Frontend de Gestão da Fila (admin)**
-A lógica de fila, otimização e scheduler do módulo `fila/` não tem interface. O admin não consegue ver a fila de pedidos aguardando impressão, reordenar prioridades nem acionar manualmente o reescalonamento pela UI.
+**2. Frontend do plano do dia (admin)**
+A atribuição em si já é automática (pedido pago → impressora ociosa com capacidade sobrando, sem ação manual) e o material de cada impressora já é editável em AdminPrintersPage. O que falta é uma tela mostrando o **plano calculado** por `reescalonarFilaVirtual()` (`pedido_impressora`) — hoje esse cálculo existe e roda, mas ninguém vê o resultado nem consegue reordenar prioridades manualmente pela UI.
 
 **3. Email não configurado no `.env`**
 `EMAIL_USER` e `EMAIL_PASS` estão vazios. O código de email está pronto e chamado nos lugares certos — só falta a conta Gmail com "senha de app" ativa.

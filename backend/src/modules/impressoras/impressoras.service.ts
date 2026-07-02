@@ -125,7 +125,16 @@ export class ImpressoraService {
   }
 
   async confirmarRemocao(idImpressora: number): Promise<Impressora> {
-    return this.orquestrador.confirmarRemocao(idImpressora);
+    const impressora = await this.orquestrador.confirmarRemocao(idImpressora);
+    // Impressora acabou de ficar ociosa — tenta preencher com o próximo pedido da fila.
+    this.orquestrador.tentarAtribuirAutomaticamente().catch((err) =>
+      console.error("[ImpressoraService] Falha na atribuição automática pós-remoção:", err.message),
+    );
+    return impressora;
+  }
+
+  async tentarAtribuirAutomaticamente() {
+    return this.orquestrador.tentarAtribuirAutomaticamente();
   }
 
   async listarEventos(idImpressora: number, limit = 20) {

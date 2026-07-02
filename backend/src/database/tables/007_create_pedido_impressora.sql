@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS pedido_impressora (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  id_pedido INT NOT NULL,
-  id_impressora INT NOT NULL,
+  id_pedido INT UNSIGNED NOT NULL,
+  id_impressora INT UNSIGNED NOT NULL,
   status ENUM('na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado') NOT NULL DEFAULT 'na_fila',
   posicao_fila INT NOT NULL,
   inicio_previsto_horas DECIMAL(8,2) NULL,
