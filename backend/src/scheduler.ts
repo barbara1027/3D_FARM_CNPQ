@@ -4,8 +4,13 @@ import { PedidoRepository } from "./modules/pedidos/pedidos.repository";
 import { ImpressoraRepository } from "./modules/impressoras/impressoras.repository";
 import { ImpressoraService } from "./modules/impressoras/impressoras.service";
 
-const filaService = new FilaService(new PedidoRepository(), new ImpressoraRepository());
-const impressoraService = new ImpressoraService(new ImpressoraRepository());
+const impressoraRepository = new ImpressoraRepository();
+const filaService = new FilaService(new PedidoRepository(), impressoraRepository);
+const impressoraService = new ImpressoraService(
+  impressoraRepository,
+  undefined,
+  filaService,
+);
 
 export async function reescalonarFila(): Promise<void> {
   try {

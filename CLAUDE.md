@@ -17,7 +17,7 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 |---|---|
 | Backend | Express 5, TypeScript, MySQL2, JWT, Passport + Google OAuth, Multer, Swagger |
 | Frontend | React 18, TypeScript, rolldown-vite 7.1.14, MUI v7, React Router v7, Axios |
-| Banco | MySQL — banco: `3d_farm` |
+| Banco | MySQL 8.0.16+ — banco: `3d_farm` |
 | Slicer | PrusaSlicer CLI (processo externo via `child_process.spawn`) |
 | Pagamento | Stripe — Checkout Session + Webhook implementados |
 
@@ -29,16 +29,9 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 3d-farm/
 ├── CLAUDE.md
 ├── backend/
-│   ├── schema.sql                    ← schema base (já inclui pipeline e impressora_eventos)
-│   ├── migration_quantidade_temp.sql ← pré-requisito de temp_material_infill e parametros_avancados
-│   ├── migration_nivel_usuario.sql   ← campo nivel na tabela usuarios
-│   ├── migration_scheduler_columns.sql ← colunas de ETA/fila nos pedidos e impressoras
-│   ├── migration_temp_material_infill.sql
-│   ├── migration_parametros_avancados.sql
-│   ├── migration_arquivos_id_pedido.sql
-│   ├── migration_capacidade_diaria.sql ← horas_usadas_hoje/data_referencia_capacidade (gatilho automático da fila)
 │   ├── .env
 │   ├── package.json
+│   ├── docs/database-setup.md        ← procedimento canônico do banco
 │   ├── uploads/                      ← STLs enviados pelos clientes
 │   ├── gcode_storage/                ← G-codes gerados pelo slicer
 │   └── src/
@@ -46,9 +39,10 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 │       ├── app.ts                    ← Express: CORS, session, passport, statics, Stripe webhook
 │       ├── scheduler.ts              ← cron diário de reescalonamento da fila
 │       ├── routes/index.ts           ← monta todos os routers
-│       ├── database/connection.ts    ← pool MySQL2
-│       ├── database/tables/          ← scripts de criação das tabelas (001–009)
-│       ├── seed.ts                   ← popula banco com dados de teste
+│       ├── database/connection.ts    ← pool MySQL2 com sessão UTC
+│       ├── database/commands/        ← comandos db:init e db:verify
+│       ├── database/tables/          ← fonte oficial das tabelas (001–010)
+│       ├── seed.ts                   ← seed opcional e exclusivo de desenvolvimento
 │       ├── middleware/auth.middleware.ts  ← authMiddleware + adminMiddleware
 │       ├── services/
 │       │   └── email.service.ts      ← nodemailer: revisão, falhou, concluído, impressora erro
@@ -138,8 +132,10 @@ Sistema de gestão de uma farm de impressão 3D. Clientes fazem upload de arquiv
 # Backend
 cd backend
 npm install
+npm run db:init       # cria somente banco novo e vazio
+npm run db:verify     # confere a estrutura via information_schema
+npm run db:seed       # opcional; exige as proteções de desenvolvimento
 npm run dev          # ts-node src/server.ts → porta 3333
-npm run seed         # popula banco (requer usuários criados antes)
 npm run typecheck    # tsc --noEmit
 npm run build        # compila para dist/
 
@@ -154,61 +150,28 @@ npm run build        # tsc -b && vite build
 
 ## Setup inicial do banco
 
-```bash
-# 1. Criar banco
-mysql -u root -e "CREATE DATABASE IF NOT EXISTS 3d_farm;"
-
-# 2. Schema base
-mysql -u root 3d_farm < backend/schema.sql
-
-# 3. Migrations — rodar em ordem (quantidade_temp é pré-requisito de
-#    temp_material_infill e parametros_avancados — sem ela, as duas falham)
-mysql -u root 3d_farm < backend/migration_quantidade_temp.sql
-mysql -u root 3d_farm < backend/migration_nivel_usuario.sql
-mysql -u root 3d_farm < backend/migration_scheduler_columns.sql
-mysql -u root 3d_farm < backend/migration_temp_material_infill.sql
-mysql -u root 3d_farm < backend/migration_parametros_avancados.sql
-mysql -u root 3d_farm < backend/migration_arquivos_id_pedido.sql
-mysql -u root 3d_farm < backend/migration_capacidade_diaria.sql
-
-# 4. Tabelas auxiliares (se ainda não existirem)
-mysql -u root 3d_farm < backend/src/database/tables/007_create_pedido_impressora.sql
-mysql -u root 3d_farm < backend/src/database/tables/009_create_chat_mensagens.sql
-```
-
-### Criar usuários e rodar seed
-
-O seed **não cria usuários** — requer pelo menos 1 admin e 1 cliente antes:
-
-```bash
-curl -X POST http://localhost:3333/usuarios \
-  -H "Content-Type: application/json" \
-  -d '{"nome":"Admin","email":"admin@3dfarm.com","senha":"admin123","tipo":"admin"}'
-
-curl -X POST http://localhost:3333/usuarios \
-  -H "Content-Type: application/json" \
-  -d '{"nome":"Ana Clara","email":"ana@cliente.com","senha":"cliente123","tipo":"cliente"}'
-
-cd backend && npm run seed
-```
-
-O seed cria: 5 materiais · 3 qualidades · 6 arquivos fictícios · 10 pedidos · 3 impressoras.
+O único procedimento oficial está em [`backend/docs/database-setup.md`](backend/docs/database-setup.md). Ele requer MySQL 8.0.16 ou superior e parte sempre de um banco novo e vazio. `src/database/tables/` é a única fonte editável da estrutura; não existe fluxo de migrations nem comando `db:reset`.
 
 ---
 
 ## Variáveis de ambiente (`backend/.env`)
 
-Todas as variáveis obrigatórias já estão configuradas. Referência:
+Use `backend/.env.example` como referência e nunca registre credenciais reais no repositório:
 
 ```env
+NODE_ENV=development
 PORT=3333
 
-# Banco
-DB_HOST=localhost
+# Banco — todas as cinco variáveis são obrigatórias
+DB_HOST=127.0.0.1
 DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=
+DB_USER=3d_farm_app
+DB_PASSWORD=change_me
 DB_NAME=3d_farm
+
+# Seed opcional de desenvolvimento
+DB_SEED_CONFIRM=3d_farm       # deve ser idêntico a DB_NAME
+DEV_SEED_PASSWORD=<mínimo 12 caracteres>
 
 # JWT e Sessão — já configurados com chaves aleatórias reais
 JWT_SECRET=<chave real>
@@ -348,25 +311,23 @@ Tabela: `chat_mensagens` com campos `id_pedido`, `id_remetente`, `tipo_remetente
 
 ## Fila de impressão
 
-Módulo desenvolvido por João (branch `fila-impressao-limpa`, commit `e1184da`), com atribuição
-automática adicionada posteriormente.
+`pedido_impressora` é a fonte única do planejamento e da execução.
 
-- `FilaService.reescalonarFilaVirtual()` — simula um plano ideal do dia inteiro (heurística de
-  máquinas paralelas com setup dependente de sequência) e grava em `pedido_impressora`. É uma
-  ferramenta de **planejamento/visibilidade**, recomeça do zero a cada chamada — não executa nada.
-- `FilaOtimizacaoService` — o algoritmo de otimização em si (ETA, buffer de risco, prioridade paga
-  furando fila condicionalmente sem atrasar ninguém).
+- `FilaService.reescalonarFilaVirtual()` — executa a heurística de máquinas paralelas, considera
+  todos os slots elegíveis, calcula posição/custos e persiste impressora e slot. O replanejamento
+  altera somente itens planejáveis; reservas, impressões e histórico são preservados.
+- `FilaOtimizacaoService` — mantém FIFO e permite a ultrapassagem por prioridade paga somente
+  quando ela não viola prazo ou limite de início de outro pedido. Em sobrecarga, o atraso pago é
+  ponderado. Material já carregado, inclusive nos slots 2–4 do CFS, não recebe setup manual.
 - `EtaEntregaService` — calcula prazo estimado de entrega.
-- `ImpressoraOrquestradorService.tentarAtribuirAutomaticamente()` — **gatilho real**: pega pedidos
-  `na_fila` (prioridade paga primeiro, depois FIFO) e atribui à impressora ociosa com capacidade
-  diária sobrando (`impressoras.horas_usadas_hoje` vs `capacidade_dia_horas`, corrigido por dia via
-  `data_referencia_capacidade` — sem precisar de job de reset à meia-noite). Prefere impressora já
-  carregada com o mesmo material do pedido. O que não couber na capacidade do dia fica pra amanhã.
-  Chamado: (1) logo após o webhook do Stripe confirmar pagamento, (2) sempre que uma impressora é
-  liberada (`confirmar-remocao`), (3) como varredura de segurança no cron diário.
+- `ImpressoraOrquestradorService.tentarAtribuirAutomaticamente()` — consome exatamente a próxima
+  alocação executável de `pedido_impressora`. A reserva de alocação, pedido e impressora é
+  transacional; material/slot são revalidados fora da transação e o estado só muda para
+  `em_impressao` após confirmação física.
 - `scheduler.ts` — cron diário às 6h (configurável por `CRON_REESCALONAMENTO`): roda
-  `reescalonarFilaVirtual()` (plano informativo) + `tentarAtribuirAutomaticamente()` (varredura).
-- `POST /fila/reescalonar` — aciona o reescalonamento (plano) manualmente (admin).
+  `reescalonarFilaVirtual()` + `tentarAtribuirAutomaticamente()`, além da varredura curta de
+  segurança.
+- `POST /fila/reescalonar` — aciona o replanejamento manualmente (admin).
 
 **Ainda não existe frontend pra visualizar o plano** (`pedido_impressora`) — só a atribuição real
 (`impressoras.idPedidoAtual`, visível em AdminPrintersPage) e o material atual de cada impressora
@@ -413,9 +374,9 @@ Campo `api` da impressora determina o adapter:
 
 | Valor | Arquivo | Uso |
 |---|---|---|
-| `DUMMY` | `dummy.adapter.ts` | Simulação — use em desenvolvimento |
-| `OCTOPRINT` | `octoprint.adapter.ts` | OctoPrint REST API |
-| `MOONRAKER` | `moonraker.adapter.ts` | Klipper/Moonraker |
+| `DUMMY` | `dummy.adapter.ts` | Padrão seguro; simulação e desenvolvimento |
+| `MOONRAKER` | `moonraker.adapter.ts` | Protocolo das impressoras reais do projeto |
+| `OCTOPRINT` | `octoprint.adapter.ts` | Compatibilidade; não é o padrão |
 
 O `NotificationsDrawer` no painel admin mostra automaticamente impressoras com `status === 'Erro'` e pedidos com `status === 'na_fila'`.
 
@@ -482,7 +443,7 @@ Repository → Service → Controller → Routes → routes/index.ts
 - Novos status de pedido devem ser adicionados em **3 lugares simultaneamente**:
   1. `types/Pedido.ts` — tipo `StatusPedido`
   2. `utils/translations.ts` — label + cor MUI
-  3. migration SQL — ENUM do MySQL
+  3. `backend/src/database/tables/005_create_pedidos.sql` — ENUM do MySQL
 
 ### Adicionando nova rota
 1. Método no repository (SQL)

@@ -164,6 +164,8 @@ export class MaterialController {
    *         description: Material removido
    *       404:
    *         description: Material não encontrado
+   *       409:
+   *         description: Material vinculado a pedidos ou slots de impressoras
    */
   remover = async (req: Request, res: Response) => {
     try {
@@ -171,7 +173,12 @@ export class MaterialController {
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
       return res.status(200).json(await this.materialService.remover(id));
     } catch (error: any) {
-      const statusCode = error.message === "Material não encontrado." ? 404 : 500;
+      const statusCode =
+        error.message === "Material não encontrado."
+          ? 404
+          : error.message.includes("pedidos ou slots de impressoras")
+            ? 409
+            : 500;
       return res.status(statusCode).json({ message: error.message });
     }
   };

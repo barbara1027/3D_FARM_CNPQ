@@ -177,7 +177,7 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       ? "na_fila"
       : (complexity.isComplex ? "aguardando_revisao" : "aguardando_pagamento");
 
-    await db.execute(`
+    const [sliceUpdate]: any = await db.execute(`
       UPDATE pedidos SET
         status               = ?,
         preco                = ?,
@@ -191,7 +191,7 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
         taxa_complexidade    = ?,
         taxa_stripe          = ?,
         updated_at           = NOW()
-      WHERE id = ?
+      WHERE id = ? AND status = 'analisando'
     `, [
       novoStatus,
       totalPreco,
@@ -206,6 +206,16 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       totalTaxaStripe,
       pedidoId,
     ]);
+
+    if (Number(sliceUpdate.affectedRows) !== 1) {
+      // O pedido pode ter sido cancelado enquanto o processo externo fatiava.
+      // Preserva a transição mais recente em vez de ressuscitá-lo.
+      console.log(
+        `[AUTO-SLICE] Resultado descartado para o pedido ${pedidoId}; ` +
+          "ele deixou o estado 'analisando'.",
+      );
+      return;
+    }
 
     console.log(
       `[AUTO-SLICE] Pedido ${pedidoId} → ${novoStatus}, ` +
@@ -238,7 +248,7 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       UPDATE pedidos SET
         status     = 'falhou',
         updated_at = NOW()
-      WHERE id = ?
+       WHERE id = ? AND status = 'analisando'
     `, [pedidoId]).catch((e: any) => {
       console.error(`[AUTO-SLICE] Falha ao marcar pedido ${pedidoId} como 'falhou':`, e.message);
     });

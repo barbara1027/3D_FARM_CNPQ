@@ -1,12 +1,29 @@
-import mysql from "mysql2/promise";
+import mysql from "mysql2";
+import { DB_COLLATION, getDatabaseConfig } from "./config";
 
-export const db = mysql.createPool({
-  host: process.env.DB_HOST ?? "localhost",
-  port: Number(process.env.DB_PORT ?? 3306),
-  user: process.env.DB_USER ?? "root",
-  password: process.env.DB_PASSWORD ?? "root",
-  database: process.env.DB_NAME ?? "3d_farm",
+const config = getDatabaseConfig();
+
+const pool = mysql.createPool({
+  host: config.host,
+  port: config.port,
+  user: config.user,
+  password: config.password,
+  database: config.database,
+  charset: DB_COLLATION,
+  timezone: "Z",
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  multipleStatements: false,
 });
+
+pool.on("connection", (connection) => {
+  connection.query("SET SESSION time_zone = '+00:00'", (error) => {
+    if (error) {
+      console.error("[DB] Não foi possível configurar a sessão MySQL em UTC.");
+      connection.destroy();
+    }
+  });
+});
+
+export const db = pool.promise();

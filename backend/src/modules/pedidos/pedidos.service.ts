@@ -1,6 +1,6 @@
 import { Pedido, PedidoRepository, StatusPedido } from "./pedidos.repository";
 import { runAutoSlicePipeline } from "../slicer/auto-slice.service";
-import { emailPedidoConcluido, emailClientePecaPronta } from "../../services/email.service";
+import { PedidoImpressoraRepository } from "../fila/pedidoImpressora.repository";
 
 export interface CreatePedidoServiceDTO {
   nome: string;
@@ -29,7 +29,10 @@ export interface UpdatePedidoServiceDTO {
 }
 
 export class PedidoService {
-  constructor(private readonly repo: PedidoRepository) {}
+  constructor(
+    private readonly repo: PedidoRepository,
+    private readonly pedidoImpressoraRepository = new PedidoImpressoraRepository(),
+  ) {}
 
   async listar(): Promise<Pedido[]> {
     return this.repo.findAll();
@@ -70,41 +73,51 @@ export class PedidoService {
   async atualizar(id: number, data: UpdatePedidoServiceDTO): Promise<Pedido> {
     const pedido = await this.repo.findById(id);
     if (!pedido) throw new Error("Pedido não encontrado.");
-    await this.repo.update(id, data);
-    const updated = (await this.repo.findById(id))!;
 
-    if (data.status === "concluido" && pedido.status !== "concluido") {
-      emailPedidoConcluido({
-        id: updated.id,
-        nome: updated.nome,
-        nomeUsuario:   (updated as any).nomeUsuario,
-        emailUsuario:  (updated as any).emailUsuario,
-        preco:         updated.preco,
-        tempoEstimadoS: (updated as any).tempoEstimadoS ?? null,
-        materialGramas: (updated as any).materialGramas ?? null,
-      }).catch((e: any) => console.error("[SERVICE] Email admin concluido:", e.message));
+    if (data.status === "cancelado") {
+      const cancelamento = await this.pedidoImpressoraRepository
+        .cancelarPlanejamentoDoPedido(id);
+      if (cancelamento === "pedido_nao_encontrado") {
+        throw new Error("Pedido não encontrado.");
+      }
+      if (cancelamento === "execucao_ativa") {
+        throw new Error("Não é possível cancelar um pedido reservado ou em impressão.");
+      }
 
-      const emailCliente = (updated as any).emailUsuario;
-      if (emailCliente) {
-        emailClientePecaPronta({
-          nome:         updated.nome,
-          emailUsuario: emailCliente,
-          nomeUsuario:  (updated as any).nomeUsuario,
-        }).catch((e: any) => console.error("[SERVICE] Email cliente concluido:", e.message));
+      const demaisCampos = { ...data };
+      delete demaisCampos.status;
+      const resultado = await this.repo.update(id, demaisCampos);
+      if (resultado === "not_found") throw new Error("Pedido não encontrado.");
+      if (resultado === "execution_active") {
+        throw new Error("O pedido entrou em execução durante a atualização.");
+      }
+    } else if (data.status !== undefined) {
+      throw new Error(
+        "O status operacional do pedido só pode ser alterado pelas transições da fila.",
+      );
+    } else {
+      const resultado = await this.repo.update(id, data);
+      if (resultado === "not_found") throw new Error("Pedido não encontrado.");
+      if (resultado === "execution_active") {
+        throw new Error(
+          "Não é possível alterar material, qualidade ou arquivo de um pedido reservado ou em impressão.",
+        );
       }
     }
+    const updated = (await this.repo.findById(id))!;
 
     return updated;
   }
 
   async remover(id: number): Promise<{ message: string }> {
-    const pedido = await this.repo.findById(id);
-    if (!pedido) throw new Error("Pedido não encontrado.");
-    const bloqueados: StatusPedido[] = ["em_impressao", "na_fila", "concluido"];
-    if (bloqueados.includes(pedido.status)) {
-      throw new Error(`Não é possível remover um pedido com status "${pedido.status}".`);
+    const resultado = await this.repo.delete(id);
+    if (resultado === "not_found") throw new Error("Pedido não encontrado.");
+    if (resultado === "status_blocked") {
+      throw new Error("Não é possível remover um pedido ativo ou concluído.");
     }
-    await this.repo.delete(id);
+    if (resultado === "execution_active") {
+      throw new Error("Não é possível remover um pedido com alocação ativa.");
+    }
     return { message: "Pedido removido com sucesso." };
   }
 }

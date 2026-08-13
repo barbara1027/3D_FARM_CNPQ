@@ -1,19 +1,19 @@
 import { Request, Response } from "express";
-import { ImpressoraService } from "./impressoras.service";
+import { ImpressoraService, ImpressoraServiceError } from "./impressoras.service";
 
 function parseId(value: string | string[]): number | undefined {
   const str = Array.isArray(value) ? value[0] : value;
+  if (!/^[1-9]\d*$/.test(str)) return undefined;
   const parsed = Number(str);
-  return Number.isFinite(parsed) ? parsed : undefined;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function parseOptionalNumber(value: unknown): number | undefined {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
-  }
+function statusErroCrud(error: unknown): number {
+  return error instanceof ImpressoraServiceError ? error.statusCode : 500;
+}
 
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+function mensagemErro(error: unknown): string {
+  return error instanceof Error ? error.message : "Erro interno.";
 }
 
 export class ImpressoraController {
@@ -94,38 +94,45 @@ export class ImpressoraController {
    *     responses:
    *       201:
    *         description: Impressora criada
+   *       400:
+   *         description: Formato ou tipo inválido
+   *       404:
+   *         description: Material não encontrado
+   *       409:
+   *         description: Slot incompatível com a configuração da impressora
    */
   criar = async (req: Request, res: Response) => {
     try {
+      const body = req.body ?? {};
       const {
-        nome, modelo, status, ip, baseUrl, api, api_key, timeoutMs, idMaterial,
+        nome, modelo, status, ip, baseUrl, api, api_key, timeoutMs,
+        possuiCfs, larguraMesaMm, profundidadeMesaMm, filamentosCarregados,
         eficiencia, taxaErroRecente, tempoParaFicarLivreHoras, capacidadeDiaHoras,
-      } = req.body;
-      const materialIdNormalizado = parseOptionalNumber(idMaterial ?? req.body.id_material) ?? null;
-      if (!nome || !modelo || !api) {
-        return res.status(400).json({ message: "Os campos nome, modelo e api são obrigatórios." });
-      }
+      } = body;
       const impressora = await this.impressoraService.criar({
         nome, modelo, status,
         ip: ip ?? null, baseUrl: baseUrl ?? null,
         api, api_key: api_key ?? null,
-        timeoutMs: parseOptionalNumber(timeoutMs),
-        idMaterial: materialIdNormalizado,
-        eficiencia: parseOptionalNumber(eficiencia),
-        taxaErroRecente: parseOptionalNumber(taxaErroRecente),
-        tempoParaFicarLivreHoras: parseOptionalNumber(tempoParaFicarLivreHoras),
-        capacidadeDiaHoras: parseOptionalNumber(capacidadeDiaHoras),
+        timeoutMs,
+        possuiCfs,
+        larguraMesaMm,
+        profundidadeMesaMm,
+        filamentosCarregados,
+        eficiencia,
+        taxaErroRecente,
+        tempoParaFicarLivreHoras,
+        capacidadeDiaHoras,
       });
       return res.status(201).json(impressora);
-    } catch (error: any) {
-      return res.status(500).json({ message: error.message });
+    } catch (error: unknown) {
+      return res.status(statusErroCrud(error)).json({ message: mensagemErro(error) });
     }
   };
 
   /**
    * @swagger
    * /impressoras/{id}:
-   *   put:
+   *   patch:
    *     tags: [Impressoras]
    *     summary: Atualiza dados de uma impressora (admin)
    *     security:
@@ -145,31 +152,138 @@ export class ImpressoraController {
    *     responses:
    *       200:
    *         description: Impressora atualizada
+   *       400:
+   *         description: Formato ou tipo inválido
    *       404:
    *         description: Impressora não encontrada
+   *       409:
+   *         description: O CFS possui slots adicionais ocupados
    */
   atualizar = async (req: Request, res: Response) => {
     try {
       const id = parseId(req.params.id);
       if (id === undefined) return res.status(400).json({ message: "ID inválido." });
+      const body = req.body ?? {};
       const {
-        nome, modelo, status, ip, baseUrl, api, api_key, timeoutMs, idMaterial,
+        nome, modelo, status, ip, baseUrl, api, api_key, timeoutMs,
+        possuiCfs, larguraMesaMm, profundidadeMesaMm,
         eficiencia, taxaErroRecente, tempoParaFicarLivreHoras, capacidadeDiaHoras,
-      } = req.body;
-      const materialIdNormalizado = parseOptionalNumber(idMaterial ?? req.body.id_material);
+      } = body;
       const impressora = await this.impressoraService.atualizar(id, {
         nome, modelo, status, ip, baseUrl, api, api_key,
-        timeoutMs: parseOptionalNumber(timeoutMs),
-        idMaterial: materialIdNormalizado,
-        eficiencia: parseOptionalNumber(eficiencia),
-        taxaErroRecente: parseOptionalNumber(taxaErroRecente),
-        tempoParaFicarLivreHoras: parseOptionalNumber(tempoParaFicarLivreHoras),
-        capacidadeDiaHoras: parseOptionalNumber(capacidadeDiaHoras),
+        timeoutMs,
+        possuiCfs,
+        larguraMesaMm,
+        profundidadeMesaMm,
+        eficiencia,
+        taxaErroRecente,
+        tempoParaFicarLivreHoras,
+        capacidadeDiaHoras,
       });
       return res.status(200).json(impressora);
-    } catch (error: any) {
-      const statusCode = error.message === "Impressora não encontrada." ? 404 : 500;
-      return res.status(statusCode).json({ message: error.message });
+    } catch (error: unknown) {
+      return res.status(statusErroCrud(error)).json({ message: mensagemErro(error) });
+    }
+  };
+
+  /**
+   * @swagger
+   * /impressoras/{id}/slots/{numeroSlot}:
+   *   put:
+   *     tags: [Impressoras]
+   *     summary: Carrega ou troca o filamento de um slot (admin)
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: numeroSlot
+   *         required: true
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 4
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/CarregarFilamentoDTO'
+   *     responses:
+   *       200:
+   *         description: Impressora com o slot atualizado
+   *       400:
+   *         description: Formato inválido
+   *       404:
+   *         description: Impressora ou material não encontrado
+   *       409:
+   *         description: Slot incompatível com a configuração da impressora
+   */
+  carregarFilamento = async (req: Request, res: Response) => {
+    try {
+      const id = parseId(req.params.id);
+      const numeroSlot = parseId(req.params.numeroSlot);
+      if (id === undefined || numeroSlot === undefined) {
+        return res.status(400).json({ message: "ID da impressora ou número do slot inválido." });
+      }
+      const impressora = await this.impressoraService.carregarFilamento(
+        id,
+        numeroSlot,
+        req.body?.idMaterial,
+      );
+      return res.status(200).json(impressora);
+    } catch (error: unknown) {
+      return res.status(statusErroCrud(error)).json({ message: mensagemErro(error) });
+    }
+  };
+
+  /**
+   * @swagger
+   * /impressoras/{id}/slots/{numeroSlot}:
+   *   delete:
+   *     tags: [Impressoras]
+   *     summary: Descarrega o filamento de um slot (admin)
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *       - in: path
+   *         name: numeroSlot
+   *         required: true
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 4
+   *     responses:
+   *       200:
+   *         description: Filamento descarregado
+   *       400:
+   *         description: Número de slot inválido
+   *       404:
+   *         description: Impressora não encontrada
+   *       409:
+   *         description: Slot incompatível com a configuração da impressora
+   */
+  descarregarFilamento = async (req: Request, res: Response) => {
+    try {
+      const id = parseId(req.params.id);
+      const numeroSlot = parseId(req.params.numeroSlot);
+      if (id === undefined || numeroSlot === undefined) {
+        return res.status(400).json({ message: "ID da impressora ou número do slot inválido." });
+      }
+      return res.status(200).json(
+        await this.impressoraService.descarregarFilamento(id, numeroSlot),
+      );
+    } catch (error: unknown) {
+      return res.status(statusErroCrud(error)).json({ message: mensagemErro(error) });
     }
   };
 
@@ -198,9 +312,8 @@ export class ImpressoraController {
       const id = parseId(req.params.id);
       if (id === undefined) return res.status(400).json({ message: "ID inválido." });
       return res.status(200).json(await this.impressoraService.remover(id));
-    } catch (error: any) {
-      const statusCode = error.message === "Impressora não encontrada." ? 404 : 500;
-      return res.status(statusCode).json({ message: error.message });
+    } catch (error: unknown) {
+      return res.status(statusErroCrud(error)).json({ message: mensagemErro(error) });
     }
   };
 

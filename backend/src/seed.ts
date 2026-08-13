@@ -1,200 +1,267 @@
-/**
- * Seed — 3D Farm
- *
- * Popula o banco com dados de operação cobrindo todos os casos do sistema.
- * Usuários NÃO são criados aqui — use o cadastro normal ou o Google OAuth.
- *
- * O seed assume que já existe pelo menos 1 usuário no banco.
- * Se não tiver, crie um primeiro via: POST /usuarios
- *
- * Uso: npm run seed
- */
-
 import "dotenv/config";
+import { createHash } from "node:crypto";
+import bcrypt from "bcrypt";
+import { ResultSetHeader } from "mysql2";
 import { db } from "./database/connection";
+import { getDatabaseConfig } from "./database/config";
+import { verifyDatabase } from "./database/commands/verify";
+import { EXPECTED_TABLES } from "./database/schema-expectations";
 
-async function seed() {
-  console.log("🌱 Iniciando seed...\n");
-
-  const [usuariosExistentes]: any = await db.execute(
-    "SELECT id, tipo FROM usuarios ORDER BY id LIMIT 10"
-  );
-
-  if (!usuariosExistentes || usuariosExistentes.length === 0) {
-    console.error(`
-❌ Nenhum usuário encontrado no banco.
-
-Crie pelo menos um usuário antes de rodar o seed:
-
-  curl -X POST http://localhost:3333/usuarios \\
-    -H "Content-Type: application/json" \\
-    -d '{"nome":"Admin","email":"admin@3dfarm.com","senha":"admin123","tipo":"admin"}'
-
-  curl -X POST http://localhost:3333/usuarios \\
-    -H "Content-Type: application/json" \\
-    -d '{"nome":"Ana Clara","email":"ana@cliente.com","senha":"cliente123","tipo":"cliente"}'
-
-Depois rode npm run seed novamente.
-    `);
-    await db.end();
-    process.exit(1);
-  }
-
-  // Pega o primeiro admin e o primeiro cliente disponíveis
-  const admin = usuariosExistentes.find((u: any) => u.tipo === "admin");
-  const clientes = usuariosExistentes.filter((u: any) => u.tipo === "cliente");
-
-  if (!admin) {
-    console.error("❌ Nenhum usuário admin encontrado. Crie um admin primeiro.");
-    await db.end();
-    process.exit(1);
-  }
-
-  const idAdmin = admin.id;
-  // Se não tiver cliente, usa o próprio admin para os pedidos de teste
-  const idCliente1 = clientes[0]?.id ?? idAdmin;
-  const idCliente2 = clientes[1]?.id ?? idCliente1;
-  const idCliente3 = clientes[2]?.id ?? idCliente1;
-
-  console.log(`✓ Usuários encontrados — admin: id=${idAdmin}, clientes: ${clientes.map((c: any) => c.id).join(", ") || "usando admin"}`);
-
-  await db.execute("SET FOREIGN_KEY_CHECKS = 0");
-  await db.execute("TRUNCATE TABLE impressora_eventos");
-  await db.execute("TRUNCATE TABLE impressoras");
-  await db.execute("TRUNCATE TABLE pedidos");
-  await db.execute("TRUNCATE TABLE arquivos");
-  await db.execute("TRUNCATE TABLE qualidades");
-  await db.execute("TRUNCATE TABLE materiais");
-  await db.execute("SET FOREIGN_KEY_CHECKS = 1");
-  console.log("✓ Tabelas de dados limpas (usuários mantidos)");
-
-  await db.execute(`
-    INSERT INTO materiais (nome, tipo, preco, status, cor) VALUES
-    ('PLA Branco',        'PLA',    0.1200, 'disponivel',   'Branco'),
-    ('PLA Preto',         'PLA',    0.1200, 'disponivel',   'Preto'),
-    ('PETG Transparente', 'PETG',   0.1800, 'disponivel',   'Transparente'),
-    ('ABS Cinza',         'ABS',    0.1500, 'disponivel',   'Cinza'),
-    ('Resina Flex',       'Resina', 0.3500, 'indisponivel', 'Bege')
-  `);
-  console.log("✓ Materiais criados (4 disponíveis, 1 indisponível)");
-
-  await db.execute(`
-    INSERT INTO qualidades (nome, altura, espessura, velocidade, suporte, adesao, perimetros, camadas_topo, camadas_base, angulo_suporte) VALUES
-    ('Normal',         0.200, 1.2, 60, 0, 0, 2, 3, 3, 45),
-    ('Qualidade',      0.150, 1.6, 50, 0, 0, 3, 4, 4, 50),
-    ('Alta Qualidade', 0.100, 2.0, 40, 1, 1, 3, 5, 5, 50)
-  `);
-  console.log("✓ Qualidades criadas (Normal, Qualidade, Alta Qualidade)");
-
-  await db.execute(`
-    INSERT INTO arquivos (nome, tipo, caminho, tamanho_mb) VALUES
-    ('suporte_camera.stl',     'stl',   'uploads/fake_suporte_camera.stl',    2.40),
-    ('engrenagem_v2.stl',      'stl',   'uploads/fake_engrenagem_v2.stl',     1.10),
-    ('caixa_arduino.stl',      'stl',   'uploads/fake_caixa_arduino.stl',     5.80),
-    ('helice_drone.stl',       'stl',   'uploads/fake_helice_drone.stl',      0.90),
-    ('suporte_camera.gcode',   'gcode', 'uploads/fake_suporte_camera.gcode',  8.20),
-    ('engrenagem_v2.gcode',    'gcode', 'uploads/fake_engrenagem_v2.gcode',   3.50)
-  `);
-  console.log("✓ Arquivos criados");
-
-  await db.execute(`
-    INSERT INTO pedidos (nome, preco, descricao, status, id_usuario, id_material, id_qualidade, id_arquivo, created_at) VALUES
-
-    -- na_fila: aguardando serem processados
-    ('Suporte de Câmera GoPro', 0.00,
-      'Precisa de acabamento fino na borda.',
-      'na_fila', ?, 1, 2, 1, NOW() - INTERVAL 1 HOUR),
-
-    ('Engrenagem Robótica V2', 0.00,
-      NULL,
-      'na_fila', ?, 3, 1, 2, NOW() - INTERVAL 30 MINUTE),
-
-    -- em_impressao: sendo produzido agora
-    ('Caixa para Arduino Mega', 45.90,
-      'Precisa de espaço interno para os cabos USB.',
-      'em_impressao', ?, 4, 1, 3, NOW() - INTERVAL 3 HOUR),
-
-    -- concluido: entregue com sucesso
-    ('Suporte Mesa Ajustável', 38.50,
-      NULL,
-      'concluido', ?, 2, 2, 1, NOW() - INTERVAL 2 DAY),
-
-    ('Peça de Reposição Impressora', 22.00,
-      'Urgente — manutenção programada.',
-      'concluido', ?, 1, 1, 2, NOW() - INTERVAL 5 DAY),
-
-    ('Tampa de Proteção Sensor', 15.00,
-      NULL,
-      'concluido', ?, 1, 3, 5, NOW() - INTERVAL 7 DAY),
-
-    -- falhou: problema durante produção
-    ('Hélice Drone Miniatura', 0.00,
-      'Arquivo com problema de geometria — faces invertidas.',
-      'falhou', ?, 2, 3, 4, NOW() - INTERVAL 1 DAY),
-
-    ('Engrenagem Pequena M2', 0.00,
-      NULL,
-      'falhou', ?, 3, 2, 2, NOW() - INTERVAL 4 DAY),
-
-    -- cancelado: cancelado pelo cliente ou admin
-    ('Capa Celular Customizada', 12.00,
-      'Cliente cancelou antes do início da impressão.',
-      'cancelado', ?, 1, 1, 1, NOW() - INTERVAL 3 DAY),
-
-    ('Base Suporte Monitor', 67.00,
-      'Cancelado a pedido do cliente — mudança de especificação.',
-      'cancelado', ?, 4, 2, 3, NOW() - INTERVAL 6 DAY)
-  `, [
-    idCliente1,  // na_fila 1
-    idCliente2,  // na_fila 2
-    idCliente1,  // em_impressao
-    idCliente2,  // concluido 1
-    idCliente3,  // concluido 2
-    idCliente1,  // concluido 3
-    idCliente2,  // falhou 1
-    idCliente3,  // falhou 2
-    idCliente1,  // cancelado 1
-    idCliente2,  // cancelado 2
-  ]);
-  console.log("✓ Pedidos criados (2 na_fila · 1 em_impressao · 3 concluido · 2 falhou · 2 cancelado)");
-
-  await db.execute(`
-    INSERT INTO impressoras (nome, modelo, status, ip, base_url, api, timeout_ms, status_fisico, id_material) VALUES
-    ('Ender 3 Pro',     'Creality Ender 3 Pro', 'Imprimindo', '192.168.1.101',
-      'http://192.168.1.101', 'DUMMY', 15000, 'printing', 1),
-    ('Bambu X1 Carbon', 'Bambu Lab X1 Carbon',  'Ociosa',     '192.168.1.102',
-      'http://192.168.1.102', 'DUMMY', 15000, 'idle',     2),
-    ('Prusa MK4',       'Prusa Research MK4',   'Manutenção', NULL,
-      NULL, 'DUMMY', 15000, NULL, NULL)
-  `);
-  console.log("✓ Impressoras criadas (1 Imprimindo · 1 Ociosa · 1 Manutenção)");
-
-  await db.execute(`
-    INSERT INTO impressora_eventos (id_impressora, tipo, mensagem) VALUES
-    (1, 'job_started',  'Pedido 3 enviado para a impressora.'),
-    (1, 'health_check', 'Conexão DUMMY OK — simulação ativa.'),
-    (2, 'health_check', 'Modo DUMMY: conexão simulada com sucesso.'),
-    (3, 'status_sync',  'Impressora colocada em manutenção pelo administrador.')
-  `);
-  console.log("✓ Eventos de impressora criados");
-
-  await db.end();
-
-  console.log(`
-╔══════════════════════════════════════════════════╗
-║         Seed concluído com sucesso! 🎉           ║
-╠══════════════════════════════════════════════════╣
-║  Dados criados:                                  ║
-║  • 5 materiais  (4 disponíveis, 1 indisponível)  ║
-║  • 3 qualidades (Normal, Qualidade, Alta)        ║
-║  • 6 arquivos   (4 STL + 2 G-code)               ║
-║  • 10 pedidos   (todos os status possíveis)      ║
-║  • 3 impressoras (Imprimindo, Ociosa, Manutenção)║
-╚══════════════════════════════════════════════════╝
-  `);
+function seedLockName(database: string): string {
+  const digest = createHash("sha256").update(database).digest("hex").slice(0, 32);
+  return `3d_farm_db_seed_${digest}`;
 }
 
-seed().catch((err) => {
-  console.error("❌ Erro no seed:", err.message ?? err);
-  process.exit(1);
-});
+function validateSeedEnvironment(): { database: string; password: string } {
+  const { database } = getDatabaseConfig();
+  if (process.env.NODE_ENV !== "development") {
+    throw new Error("O db:seed é exclusivo de desenvolvimento. Defina NODE_ENV=development.");
+  }
+  if (process.env.DB_SEED_CONFIRM !== database) {
+    throw new Error("Para confirmar o banco de desenvolvimento, defina DB_SEED_CONFIRM com o mesmo valor de DB_NAME.");
+  }
+
+  const password = process.env.DEV_SEED_PASSWORD;
+  if (!password || password.length < 12) {
+    throw new Error("DEV_SEED_PASSWORD deve ter pelo menos 12 caracteres e é usada somente pelos usuários genéricos do seed.");
+  }
+  return { database, password };
+}
+
+export async function seedDevelopmentData(): Promise<void> {
+  const { database, password } = validateSeedEnvironment();
+  await verifyDatabase({ quiet: true });
+
+  const connection = await db.getConnection();
+  const lock = seedLockName(database);
+  let locked = false;
+  let transactionStarted = false;
+
+  try {
+    const [lockRows]: any = await connection.execute("SELECT GET_LOCK(?, 0) AS acquired", [lock]);
+    if (Number(lockRows[0]?.acquired) !== 1) throw new Error("Outro seed deste banco já está em andamento.");
+    locked = true;
+
+    for (const table of EXPECTED_TABLES) {
+      const [rows]: any = await connection.query(`SELECT COUNT(*) AS total FROM \`${table}\``);
+      if (Number(rows[0]?.total) !== 0) {
+        throw new Error(`Seed recusado: a tabela ${table} já contém dados. Nenhuma linha foi apagada.`);
+      }
+    }
+
+    await connection.beginTransaction();
+    transactionStarted = true;
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const insert = async (sql: string, values: unknown[]): Promise<number> => {
+      const [result] = await connection.execute<ResultSetHeader>(sql, values);
+      return result.insertId;
+    };
+
+    const adminId = await insert(
+      `INSERT INTO usuarios (nome, email, senha_hash, tipo, nivel)
+       VALUES (?, ?, ?, 'admin', 'avancado')`,
+      ["Administrador de desenvolvimento", "admin.dev@3dfarm.invalid", passwordHash],
+    );
+    const clienteId = await insert(
+      `INSERT INTO usuarios (nome, email, senha_hash, tipo, nivel)
+       VALUES (?, ?, ?, 'cliente', 'iniciante')`,
+      ["Cliente de desenvolvimento", "cliente.dev@3dfarm.invalid", passwordHash],
+    );
+
+    const plaId = await insert(
+      `INSERT INTO materiais (
+         nome, tipo, cor, preco, status,
+         temp_bico_min, temp_bico_max, temp_bico_recomendada,
+         temp_mesa_min, temp_mesa_max, temp_mesa_recomendada,
+         diametro, fan_min, fan_max, camada_min, camada_max
+       ) VALUES (?, ?, ?, ?, 'disponivel', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["Material PLA de desenvolvimento", "PLA", "Neutra", 0.1200, 195, 220, 205, 50, 60, 55, 1.75, 50, 100, 0.08, 0.30],
+    );
+    const petgId = await insert(
+      `INSERT INTO materiais (
+         nome, tipo, cor, preco, status,
+         temp_bico_min, temp_bico_max, temp_bico_recomendada,
+         temp_mesa_min, temp_mesa_max, temp_mesa_recomendada,
+         diametro, fan_min, fan_max, camada_min, camada_max
+       ) VALUES (?, ?, ?, ?, 'disponivel', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["Material PETG de desenvolvimento", "PETG", "Neutra", 0.1800, 225, 245, 235, 70, 90, 80, 1.75, 30, 50, 0.10, 0.30],
+    );
+    const absId = await insert(
+      `INSERT INTO materiais (
+         nome, tipo, cor, preco, status,
+         temp_bico_min, temp_bico_max, temp_bico_recomendada,
+         temp_mesa_min, temp_mesa_max, temp_mesa_recomendada,
+         diametro, fan_min, fan_max, camada_min, camada_max
+       ) VALUES (?, ?, ?, ?, 'disponivel', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["Material ABS de desenvolvimento", "ABS", "Neutra", 0.1500, 220, 255, 240, 100, 115, 105, 1.75, 0, 25, 0.10, 0.30],
+    );
+
+    const qualidadeNormalId = await insert(
+      `INSERT INTO qualidades (nome, altura, espessura, velocidade, suporte, adesao, perimetros, camadas_topo, camadas_base, angulo_suporte)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["Normal", 0.200, 1.200, 60, 0, 0, 2, 3, 3, 45],
+    );
+    const qualidadeDetalheId = await insert(
+      `INSERT INTO qualidades (nome, altura, espessura, velocidade, suporte, adesao, perimetros, camadas_topo, camadas_base, angulo_suporte)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["Detalhada", 0.150, 1.600, 50, 0, 0, 3, 4, 4, 50],
+    );
+    const qualidadeSuporteId = await insert(
+      `INSERT INTO qualidades (nome, altura, espessura, velocidade, suporte, adesao, perimetros, camadas_topo, camadas_base, angulo_suporte)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ["Com suporte", 0.120, 2.000, 40, 1, 1, 3, 5, 5, 50],
+    );
+
+    const stlFilaId = await insert(
+      "INSERT INTO arquivos (nome, tipo, caminho, tamanho_mb) VALUES (?, 'stl', ?, ?)",
+      ["peca_fila_demo.stl", "uploads/dev/peca_fila_demo.stl", 1.250],
+    );
+    const stlConcluidoId = await insert(
+      "INSERT INTO arquivos (nome, tipo, caminho, tamanho_mb) VALUES (?, 'stl', ?, ?)",
+      ["peca_concluida_demo.stl", "uploads/dev/peca_concluida_demo.stl", 2.500],
+    );
+    const stlAnaliseId = await insert(
+      "INSERT INTO arquivos (nome, tipo, caminho, tamanho_mb) VALUES (?, 'stl', ?, ?)",
+      ["peca_analise_demo.stl", "uploads/dev/peca_analise_demo.stl", 0.750],
+    );
+
+    const pedidoFilaId = await insert(
+      `INSERT INTO pedidos (
+         nome, preco, descricao, status, id_usuario, id_material, id_qualidade, id_arquivo,
+         parametros, quantidade, gcode_path, tempo_estimado_s, material_gramas,
+         score_complexidade, preco_base, taxa_complexidade, taxa_stripe,
+         tempo_gcode_horas, prazo_entrega_horas, prioridade_paga
+       ) VALUES (?, ?, ?, 'na_fila', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "Pedido de fila demonstrativo", 24.90, "Dados genéricos de desenvolvimento.", clienteId,
+        plaId, qualidadeNormalId, stlFilaId, JSON.stringify({ preenchimento: 20 }), 1,
+        "gcode_storage/dev/pedido_fila_demo.gcode", 7200, 42.5000, 0.1500, 22.00, 0.00, 2.90,
+        2.00, 48.00, 0,
+      ],
+    );
+    const pedidoConcluidoId = await insert(
+      `INSERT INTO pedidos (
+         nome, preco, descricao, status, id_usuario, id_material, id_qualidade, id_arquivo,
+         parametros, quantidade, gcode_path, tempo_estimado_s, material_gramas,
+         score_complexidade, preco_base, taxa_complexidade, taxa_stripe,
+         tempo_gcode_horas, prazo_entrega_horas, prioridade_paga
+       ) VALUES (?, ?, ?, 'concluido', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "Pedido concluído demonstrativo", 39.50, null, clienteId,
+        petgId, qualidadeDetalheId, stlConcluidoId, JSON.stringify({ preenchimento: 30 }), 2,
+        "gcode_storage/dev/pedido_concluido_demo.gcode", 10800, 65.0000, 0.3000, 35.00, 0.00, 4.50,
+        3.00, 72.00, 0,
+      ],
+    );
+    const pedidoAnaliseId = await insert(
+      `INSERT INTO pedidos (
+         nome, preco, descricao, status, id_usuario, id_material, id_qualidade, id_arquivo,
+         parametros, quantidade, prazo_entrega_horas, prioridade_paga
+       ) VALUES (?, 0, ?, 'analisando', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        "Pedido em análise demonstrativo", "Sem G-code enquanto a análise está pendente.", adminId,
+        absId, qualidadeSuporteId, stlAnaliseId, JSON.stringify({ preenchimento: 15 }), 1, 96.00, 0,
+      ],
+    );
+
+    await connection.execute(
+      "UPDATE arquivos SET id_pedido = CASE id WHEN ? THEN ? WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?, ?)",
+      [stlFilaId, pedidoFilaId, stlConcluidoId, pedidoConcluidoId, stlAnaliseId, pedidoAnaliseId, stlFilaId, stlConcluidoId, stlAnaliseId],
+    );
+    await insert(
+      "INSERT INTO arquivos (id_pedido, nome, tipo, caminho, tamanho_mb) VALUES (?, ?, 'gcode', ?, ?)",
+      [pedidoFilaId, "pedido_fila_demo.gcode", "gcode_storage/dev/pedido_fila_demo.gcode", 4.200],
+    );
+    await insert(
+      "INSERT INTO arquivos (id_pedido, nome, tipo, caminho, tamanho_mb) VALUES (?, ?, 'gcode', ?, ?)",
+      [pedidoConcluidoId, "pedido_concluido_demo.gcode", "gcode_storage/dev/pedido_concluido_demo.gcode", 6.800],
+    );
+
+    const k2ProId = await insert(
+      `INSERT INTO impressoras (
+         nome, modelo, possui_cfs, largura_mesa_mm, profundidade_mesa_mm,
+         status, api, timeout_ms, status_fisico, capacidade_dia_horas
+       ) VALUES (?, ?, 1, ?, ?, 'Ociosa', 'DUMMY', 15000, 'idle', 8.00)`,
+      ["Impressora demo 1", "K2 Pro", 300.00, 300.00],
+    );
+    const crealityHiId = await insert(
+      `INSERT INTO impressoras (
+         nome, modelo, possui_cfs, largura_mesa_mm, profundidade_mesa_mm,
+         status, api, timeout_ms, status_fisico, capacidade_dia_horas
+       ) VALUES (?, ?, 1, ?, ?, 'Ociosa', 'DUMMY', 15000, 'idle', 8.00)`,
+      ["Impressora demo 2", "Creality Hi", 260.00, 260.00],
+    );
+    const enderId = await insert(
+      `INSERT INTO impressoras (
+         nome, modelo, possui_cfs, largura_mesa_mm, profundidade_mesa_mm,
+         status, api, timeout_ms, status_fisico, capacidade_dia_horas
+       ) VALUES (?, ?, 0, ?, ?, 'Manutenção', 'DUMMY', 15000, 'maintenance', 8.00)`,
+      ["Impressora demo 3", "Ender 3 V3 SE", 220.00, 220.00],
+    );
+
+    await connection.execute(
+      `INSERT INTO impressora_slots_filamento (id_impressora, numero_slot, id_material)
+       VALUES (?, 1, ?), (?, 2, ?), (?, 1, ?), (?, 2, ?), (?, 1, ?)`,
+      [
+        k2ProId, plaId,
+        k2ProId, petgId,
+        crealityHiId, petgId,
+        crealityHiId, absId,
+        enderId, absId,
+      ],
+    );
+
+    await insert(
+      `INSERT INTO pedido_impressora (
+         id_pedido, id_impressora, status, posicao_fila,
+         numero_slot_planejado, requer_troca_manual, tentativas_inicio,
+         proxima_tentativa_em, inicio_previsto_horas,
+         conclusao_prevista_horas, custo, setup_horas, risco_esperado_horas,
+         tempo_total_horas, atraso_horas
+       ) VALUES (?, ?, 'na_fila', 1, 1, 0, 0, NULL, 0, 2.20, 0.20, 0.20, 0, 2.20, 0)`,
+      [pedidoFilaId, k2ProId],
+    );
+    await insert(
+      "INSERT INTO impressora_eventos (id_impressora, tipo, mensagem, payload_json) VALUES (?, ?, ?, ?)",
+      [k2ProId, "seed_created", "Impressora DUMMY criada pelo seed de desenvolvimento.", JSON.stringify({ protocol: "DUMMY" })],
+    );
+    await insert(
+      "INSERT INTO impressora_eventos (id_impressora, tipo, mensagem) VALUES (?, ?, ?)",
+      [crealityHiId, "seed_created", "Impressora DUMMY criada pelo seed de desenvolvimento."],
+    );
+    await insert(
+      "INSERT INTO impressora_eventos (id_impressora, tipo, mensagem) VALUES (?, ?, ?)",
+      [enderId, "seed_created", "Impressora DUMMY de manutenção criada pelo seed de desenvolvimento."],
+    );
+    await insert(
+      "INSERT INTO chat_mensagens (id_pedido, id_remetente, tipo_remetente, mensagem, lido) VALUES (?, ?, 'cliente', ?, 0)",
+      [pedidoFilaId, clienteId, "Mensagem genérica do cliente para validar o chat."],
+    );
+    await insert(
+      "INSERT INTO chat_mensagens (id_pedido, id_remetente, tipo_remetente, mensagem, lido) VALUES (?, ?, 'admin', ?, 1)",
+      [pedidoFilaId, adminId, "Resposta genérica do administrador para validar o chat."],
+    );
+
+    await connection.commit();
+    transactionStarted = false;
+    console.log(`[db:seed] Dados genéricos inseridos com sucesso no banco ${database}.`);
+  } catch (error) {
+    if (transactionStarted) await connection.rollback();
+    throw error;
+  } finally {
+    if (locked) await connection.execute("SELECT RELEASE_LOCK(?)", [lock]).catch(() => undefined);
+    connection.release();
+  }
+}
+
+if (require.main === module) {
+  seedDevelopmentData()
+    .catch((error: any) => {
+      console.error(`[db:seed] ERRO: ${error?.message ?? error}`);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await db.end();
+    });
+}

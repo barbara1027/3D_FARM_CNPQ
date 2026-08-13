@@ -112,6 +112,17 @@ export interface UpdatePedidoRepositoryDTO {
   tempoExecFarmHoras?: number | null;
 }
 
+export type UpdatePedidoResult =
+  | "updated"
+  | "not_found"
+  | "execution_active"
+  | "status_forbidden";
+export type DeletePedidoResult =
+  | "deleted"
+  | "not_found"
+  | "status_blocked"
+  | "execution_active";
+
 function toNumber(value: unknown): number {
   return Number(value);
 }
@@ -202,28 +213,33 @@ export class PedidoRepository {
   async findPendentesParaOtimizacao(): Promise<PedidoOtimizacaoRow[]> {
     const [rows] = await db.execute(`
       SELECT
-        id,
-        id_material AS idMaterial,
-        tempo_gcode_horas AS tempoGcodeHoras,
+        p.id,
+        p.id_material AS idMaterial,
+        p.tempo_gcode_horas AS tempoGcodeHoras,
         CASE
-          WHEN prazo_entrega IS NOT NULL
-            THEN TIMESTAMPDIFF(MINUTE, NOW(), prazo_entrega) / 60
-          ELSE prazo_entrega_horas
+          WHEN p.prazo_entrega IS NOT NULL
+            THEN TIMESTAMPDIFF(MINUTE, NOW(), p.prazo_entrega) / 60
+          ELSE p.prazo_entrega_horas
         END AS prazoEntregaHoras,
         CASE
-          WHEN limite_inicio_impressao IS NOT NULL
-            THEN TIMESTAMPDIFF(MINUTE, NOW(), limite_inicio_impressao) / 60
-          WHEN tempo_maximo_espera_horas IS NOT NULL
-            THEN tempo_maximo_espera_horas - TIMESTAMPDIFF(MINUTE, created_at, NOW()) / 60
+          WHEN p.limite_inicio_impressao IS NOT NULL
+            THEN TIMESTAMPDIFF(MINUTE, NOW(), p.limite_inicio_impressao) / 60
+          WHEN p.tempo_maximo_espera_horas IS NOT NULL
+            THEN p.tempo_maximo_espera_horas - TIMESTAMPDIFF(MINUTE, p.created_at, NOW()) / 60
           ELSE NULL
         END AS tempoMaximoEsperaHoras,
-        DATE_FORMAT(limite_inicio_impressao, '%Y-%m-%d %H:%i:%s') AS limiteInicioImpressao,
-        created_at AS criadoEm,
-        prioridade_paga AS prioridadePaga
-      FROM pedidos
-      WHERE status = 'na_fila'
-      ORDER BY created_at ASC, id ASC
-      LIMIT 100
+        DATE_FORMAT(p.limite_inicio_impressao, '%Y-%m-%d %H:%i:%s') AS limiteInicioImpressao,
+        p.created_at AS criadoEm,
+        p.prioridade_paga AS prioridadePaga
+      FROM pedidos p
+      WHERE p.status = 'na_fila'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pedido_impressora pi
+          WHERE pi.id_pedido = p.id
+            AND pi.status IN ('reservado', 'em_impressao')
+        )
+      ORDER BY p.created_at ASC, p.id ASC
     `);
 
     return (rows as any[]).map(mapPedidoOtimizacao);
@@ -267,13 +283,13 @@ export class PedidoRepository {
     return result.insertId;
   }
 
-  async update(id: number, data: UpdatePedidoRepositoryDTO): Promise<void> {
+  async update(id: number, data: UpdatePedidoRepositoryDTO): Promise<UpdatePedidoResult> {
+    if (data.status !== undefined) return "status_forbidden";
     const campos: string[] = [];
     const vals: any[]      = [];
 
     if (data.preco       !== undefined) { campos.push("preco = ?");        vals.push(data.preco); }
     if (data.descricao   !== undefined) { campos.push("descricao = ?");    vals.push(data.descricao); }
-    if (data.status      !== undefined) { campos.push("status = ?");       vals.push(data.status); }
     if (data.idMaterial  !== undefined) { campos.push("id_material = ?");  vals.push(data.idMaterial); }
     if (data.idQualidade !== undefined) { campos.push("id_qualidade = ?"); vals.push(data.idQualidade); }
     if (data.idArquivo   !== undefined) { campos.push("id_arquivo = ?");   vals.push(data.idArquivo); }
@@ -295,12 +311,122 @@ export class PedidoRepository {
     if (data.bufferSegurancaHoras !== undefined) { campos.push("buffer_seguranca_horas = ?"); vals.push(data.bufferSegurancaHoras); }
     if (data.tempoExecFarmHoras !== undefined) { campos.push("tempo_exec_farm_horas = ?"); vals.push(data.tempoExecFarmHoras); }
 
-    if (campos.length === 0) return;
-    vals.push(id);
-    await db.execute(`UPDATE pedidos SET ${campos.join(", ")} WHERE id = ?`, vals);
+    if (campos.length === 0) return "updated";
+
+    const connection = await db.getConnection();
+    let transactionStarted = false;
+    try {
+      await connection.beginTransaction();
+      transactionStarted = true;
+      const [pedidoRows] = await connection.execute(
+        "SELECT id FROM pedidos WHERE id = ? FOR UPDATE",
+        [id],
+      );
+      if ((pedidoRows as any[]).length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "not_found";
+      }
+
+      const alteraEntradaFisica =
+        data.idMaterial !== undefined ||
+        data.idQualidade !== undefined ||
+        data.idArquivo !== undefined;
+      if (alteraEntradaFisica) {
+        const [activeRows] = await connection.execute(
+          `SELECT id
+           FROM pedido_impressora
+           WHERE id_pedido = ? AND status IN ('reservado', 'em_impressao')
+           LIMIT 1
+           FOR UPDATE`,
+          [id],
+        );
+        if ((activeRows as any[]).length > 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return "execution_active";
+        }
+      }
+
+      vals.push(id);
+      const [result]: any = await connection.execute(
+        `UPDATE pedidos SET ${campos.join(", ")} WHERE id = ?`,
+        vals,
+      );
+      if (Number(result.affectedRows) !== 1) {
+        throw new Error("O pedido mudou durante a atualização.");
+      }
+      await connection.commit();
+      transactionStarted = false;
+      return "updated";
+    } catch (error) {
+      if (transactionStarted) await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
-  async delete(id: number): Promise<void> {
-    await db.execute("DELETE FROM pedidos WHERE id = ?", [id]);
+  async delete(id: number): Promise<DeletePedidoResult> {
+    const connection = await db.getConnection();
+    let transactionStarted = false;
+    try {
+      await connection.beginTransaction();
+      transactionStarted = true;
+      const [pedidoRows] = await connection.execute(
+        "SELECT status FROM pedidos WHERE id = ? FOR UPDATE",
+        [id],
+      );
+      const pedido = (pedidoRows as any[])[0];
+      if (!pedido) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "not_found";
+      }
+      if (["na_fila", "em_impressao", "concluido"].includes(String(pedido.status))) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "status_blocked";
+      }
+
+      const [allocationRows] = await connection.execute(
+        `SELECT id
+         FROM pedido_impressora
+         WHERE id_pedido = ?
+           AND status IN ('na_fila', 'reservado', 'aguardando_filamento', 'em_impressao')
+         LIMIT 1
+         FOR UPDATE`,
+        [id],
+      );
+      const [printerRows] = await connection.execute(
+        `SELECT id
+         FROM impressoras
+         WHERE id_pedido_atual = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [id],
+      );
+      if ((allocationRows as any[]).length > 0 || (printerRows as any[]).length > 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "execution_active";
+      }
+
+      const [result]: any = await connection.execute(
+        "DELETE FROM pedidos WHERE id = ?",
+        [id],
+      );
+      if (Number(result.affectedRows) !== 1) {
+        throw new Error("O pedido mudou durante a remoção.");
+      }
+      await connection.commit();
+      transactionStarted = false;
+      return "deleted";
+    } catch (error) {
+      if (transactionStarted) await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 }

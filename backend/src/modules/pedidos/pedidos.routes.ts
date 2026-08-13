@@ -133,8 +133,8 @@ pedidosRoutes.get("/mensagens/conversas", authMiddleware, async (req: Request, r
       p.id   AS idPedido, p.nome AS nomePedido,
       u.nome AS nomeCliente, u.email AS emailCliente,
       (SELECT cm2.mensagem FROM chat_mensagens cm2
-       WHERE cm2.id_pedido = p.id ORDER BY cm2.criado_em DESC LIMIT 1) AS ultimaMensagem,
-      DATE_FORMAT(MAX(cm.criado_em), '%Y-%m-%dT%H:%i:%sZ') AS ultimaMensagemEm,
+       WHERE cm2.id_pedido = p.id ORDER BY cm2.created_at DESC LIMIT 1) AS ultimaMensagem,
+      DATE_FORMAT(MAX(cm.created_at), '%Y-%m-%dT%H:%i:%sZ') AS ultimaMensagemEm,
       SUM(CASE WHEN cm.tipo_remetente = 'cliente' AND cm.lido = 0 THEN 1 ELSE 0 END) AS naoLidas
     FROM pedidos p
     JOIN chat_mensagens cm ON cm.id_pedido = p.id
@@ -146,8 +146,8 @@ pedidosRoutes.get("/mensagens/conversas", authMiddleware, async (req: Request, r
     SELECT
       p.id AS idPedido, p.nome AS nomePedido,
       (SELECT cm2.mensagem FROM chat_mensagens cm2
-       WHERE cm2.id_pedido = p.id ORDER BY cm2.criado_em DESC LIMIT 1) AS ultimaMensagem,
-      DATE_FORMAT(MAX(cm.criado_em), '%Y-%m-%dT%H:%i:%sZ') AS ultimaMensagemEm,
+       WHERE cm2.id_pedido = p.id ORDER BY cm2.created_at DESC LIMIT 1) AS ultimaMensagem,
+      DATE_FORMAT(MAX(cm.created_at), '%Y-%m-%dT%H:%i:%sZ') AS ultimaMensagemEm,
       SUM(CASE WHEN cm.tipo_remetente = 'admin' AND cm.lido = 0 THEN 1 ELSE 0 END) AS naoLidas
     FROM pedidos p
     JOIN chat_mensagens cm ON cm.id_pedido = p.id
@@ -202,7 +202,7 @@ const CHAT_SEL = `
     cm.id, cm.id_pedido AS idPedido, cm.id_remetente AS idRemetente,
     u.nome AS nomeRemetente, cm.tipo_remetente AS tipoRemetente,
     cm.mensagem, cm.lido,
-    DATE_FORMAT(cm.criado_em, '%Y-%m-%dT%H:%i:%sZ') AS criadoEm
+    DATE_FORMAT(cm.created_at, '%Y-%m-%dT%H:%i:%sZ') AS criadoEm
   FROM chat_mensagens cm
   JOIN usuarios u ON u.id = cm.id_remetente
 `;
@@ -235,7 +235,7 @@ pedidosRoutes.get("/:id/mensagens", authMiddleware, async (req: Request, res: Re
   const user = req.jwtUser!;
   if (!(await verificarAcessoPedido(id, user, res))) return;
 
-  const [rows]: any = await db.execute(`${CHAT_SEL} WHERE cm.id_pedido = ? ORDER BY cm.criado_em ASC`, [id]);
+  const [rows]: any = await db.execute(`${CHAT_SEL} WHERE cm.id_pedido = ? ORDER BY cm.created_at ASC`, [id]);
 
   const outroTipo = user.tipo === "admin" ? "cliente" : "admin";
   await db.execute(
@@ -282,13 +282,23 @@ pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
           message: "Pedido não pode ser reimpresso: G-code ainda não foi gerado para ele.",
         });
       }
-      if (status === "cancelado") {
-        return res.status(409).json({ message: "Pedido cancelado não pode ser reimpresso." });
+      if (status !== "concluido" && status !== "falhou") {
+        return res.status(409).json({
+          message: `Somente pedidos concluídos ou falhos podem ser reimpressos. Status atual: "${status}".`,
+        });
       }
 
-      await db.execute(
-        "UPDATE pedidos SET status = 'na_fila', updated_at = NOW() WHERE id = ?", [id]
+      const [updateResult]: any = await db.execute(
+        `UPDATE pedidos
+         SET status = 'na_fila', updated_at = NOW()
+         WHERE id = ? AND status IN ('concluido', 'falhou')`,
+        [id]
       );
+      if (Number(updateResult.affectedRows) !== 1) {
+        return res.status(409).json({
+          message: "O estado do pedido mudou durante a solicitação de reimpressão.",
+        });
+      }
       const [rows]: any = await db.execute(
         "SELECT id, status FROM pedidos WHERE id = ? LIMIT 1", [id]
       );

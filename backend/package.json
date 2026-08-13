@@ -7,7 +7,11 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "seed": "ts-node src/seed.ts"
+    "db:init": "ts-node src/database/commands/init.ts",
+    "db:verify": "ts-node src/database/commands/verify.ts",
+    "db:seed": "ts-node src/seed.ts",
+    "test": "node --require ts-node/register --require ./src/test/setup.ts --test --test-concurrency=1 src/modules/impressoras/impressoras.service.test.ts src/modules/pedidos/pedidos.repository.test.ts src/modules/pedidos/pedidos.service.test.ts src/modules/fila/filaOtimizacao.service.test.ts src/modules/fila/pedidoImpressora.repository.test.ts src/modules/impressoras/comunicacao/cfs-print.adapter.test.ts src/modules/impressoras/comunicacao/gcode-logical-filament.parser.test.ts src/modules/impressoras/comunicacao/orquestrador.service.test.ts",
+    "test:mysql-integration": "node --require ts-node/register --require ./src/test/setup.ts --test --test-concurrency=1 src/modules/fila/pedidoImpressora.repository.integration.test.ts"
   },
   "dependencies": {
     "axios": "^1.13.2",

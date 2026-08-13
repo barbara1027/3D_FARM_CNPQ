@@ -1,0 +1,23 @@
+CREATE TABLE `qualidades` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `nome` VARCHAR(100) NOT NULL DEFAULT '',
+  `altura` DECIMAL(5,3) NOT NULL,
+  `espessura` DECIMAL(5,3) NOT NULL,
+  `velocidade` SMALLINT UNSIGNED NOT NULL,
+  `suporte` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `adesao` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `perimetros` TINYINT UNSIGNED NOT NULL DEFAULT 2,
+  `camadas_topo` TINYINT UNSIGNED NOT NULL DEFAULT 3,
+  `camadas_base` TINYINT UNSIGNED NOT NULL DEFAULT 3,
+  `angulo_suporte` TINYINT UNSIGNED NOT NULL DEFAULT 45,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  CONSTRAINT `chk_qualidades_altura_positive` CHECK (`altura` > 0),
+  CONSTRAINT `chk_qualidades_espessura_positive` CHECK (`espessura` > 0),
+  CONSTRAINT `chk_qualidades_velocidade_positive` CHECK (`velocidade` > 0),
+  CONSTRAINT `chk_qualidades_suporte_boolean` CHECK (`suporte` IN (0, 1)),
+  CONSTRAINT `chk_qualidades_adesao_boolean` CHECK (`adesao` IN (0, 1)),
+  CONSTRAINT `chk_qualidades_perimetros_positive` CHECK (`perimetros` > 0),
+  CONSTRAINT `chk_qualidades_angulo_suporte_range` CHECK (`angulo_suporte` BETWEEN 0 AND 90)
+) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

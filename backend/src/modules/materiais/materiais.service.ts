@@ -64,7 +64,7 @@ export class MaterialService {
       await this.materialRepository.delete(id);
     } catch (e: any) {
       if (e.code === 'ER_ROW_IS_REFERENCED_2' || e.errno === 1451) {
-        throw new Error("Este material está vinculado a pedidos existentes e não pode ser removido. Marque-o como indisponível.");
+        throw new Error("Este material está vinculado a pedidos ou slots de impressoras e não pode ser removido. Marque-o como indisponível.");
       }
       throw e;
     }
