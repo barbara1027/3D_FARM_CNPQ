@@ -107,7 +107,7 @@ export class ImpressoraController {
       const {
         nome, modelo, status, ip, baseUrl, api, api_key, timeoutMs,
         possuiCfs, larguraMesaMm, profundidadeMesaMm, filamentosCarregados,
-        eficiencia, taxaErroRecente, tempoParaFicarLivreHoras, capacidadeDiaHoras,
+        eficiencia, taxaErroRecente, capacidadeDiaHoras,
       } = body;
       const impressora = await this.impressoraService.criar({
         nome, modelo, status,
@@ -120,7 +120,6 @@ export class ImpressoraController {
         filamentosCarregados,
         eficiencia,
         taxaErroRecente,
-        tempoParaFicarLivreHoras,
         capacidadeDiaHoras,
       });
       return res.status(201).json(impressora);
@@ -167,7 +166,7 @@ export class ImpressoraController {
       const {
         nome, modelo, status, ip, baseUrl, api, api_key, timeoutMs,
         possuiCfs, larguraMesaMm, profundidadeMesaMm,
-        eficiencia, taxaErroRecente, tempoParaFicarLivreHoras, capacidadeDiaHoras,
+        eficiencia, taxaErroRecente, capacidadeDiaHoras,
       } = body;
       const impressora = await this.impressoraService.atualizar(id, {
         nome, modelo, status, ip, baseUrl, api, api_key,
@@ -177,7 +176,6 @@ export class ImpressoraController {
         profundidadeMesaMm,
         eficiencia,
         taxaErroRecente,
-        tempoParaFicarLivreHoras,
         capacidadeDiaHoras,
       });
       return res.status(200).json(impressora);

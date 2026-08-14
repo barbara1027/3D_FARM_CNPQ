@@ -23,8 +23,10 @@ arquivosRoutes.get("/:id/download", authMiddleware, async (req: Request, res: Re
   const arquivo = await arquivoRepository.findById(id);
   if (!arquivo) return res.status(404).json({ message: "Arquivo não encontrado." });
 
-  // Verificação de acesso: admin sempre pode; cliente apenas se o pedido for dele
-  if (user.tipo !== "admin") {
+  // Verificação de acesso (Fase 29): admin sempre pode; cliente comum
+  // precisa ser o dono direto do arquivo OU dono do pedido associado
+  // (cobre arquivos enviados antes da coluna id_usuario existir).
+  if (user.tipo !== "admin" && arquivo.idUsuario !== user.sub) {
     if (!arquivo.idPedido) return res.status(403).json({ message: "Acesso negado." });
     const [rows]: any = await db.execute(
       "SELECT id_usuario FROM pedidos WHERE id = ? LIMIT 1", [arquivo.idPedido]

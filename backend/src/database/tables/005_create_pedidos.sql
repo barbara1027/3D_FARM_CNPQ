@@ -39,6 +39,9 @@ CREATE TABLE `pedidos` (
   `buffer_prioridade_horas` DECIMAL(8,2) NULL,
   `buffer_seguranca_horas` DECIMAL(8,2) NULL,
   `tempo_exec_farm_horas` DECIMAL(8,2) NULL,
+  `dimensao_x_mm` DECIMAL(8,2) NULL,
+  `dimensao_y_mm` DECIMAL(8,2) NULL,
+  `dimensao_z_mm` DECIMAL(8,2) NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -68,5 +71,8 @@ CREATE TABLE `pedidos` (
   CONSTRAINT `chk_pedidos_tempo_espera_nonnegative` CHECK (`tempo_maximo_espera_horas` IS NULL OR `tempo_maximo_espera_horas` >= 0),
   CONSTRAINT `chk_pedidos_buffer_prioridade_nonnegative` CHECK (`buffer_prioridade_horas` IS NULL OR `buffer_prioridade_horas` >= 0),
   CONSTRAINT `chk_pedidos_buffer_seguranca_nonnegative` CHECK (`buffer_seguranca_horas` IS NULL OR `buffer_seguranca_horas` >= 0),
-  CONSTRAINT `chk_pedidos_tempo_exec_nonnegative` CHECK (`tempo_exec_farm_horas` IS NULL OR `tempo_exec_farm_horas` >= 0)
+  CONSTRAINT `chk_pedidos_tempo_exec_nonnegative` CHECK (`tempo_exec_farm_horas` IS NULL OR `tempo_exec_farm_horas` >= 0),
+  CONSTRAINT `chk_pedidos_dimensao_x_nonnegative` CHECK (`dimensao_x_mm` IS NULL OR `dimensao_x_mm` >= 0),
+  CONSTRAINT `chk_pedidos_dimensao_y_nonnegative` CHECK (`dimensao_y_mm` IS NULL OR `dimensao_y_mm` >= 0),
+  CONSTRAINT `chk_pedidos_dimensao_z_nonnegative` CHECK (`dimensao_z_mm` IS NULL OR `dimensao_z_mm` >= 0)
 ) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

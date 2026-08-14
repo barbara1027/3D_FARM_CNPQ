@@ -126,18 +126,32 @@ export async function seedDevelopmentData(): Promise<void> {
       ["peca_analise_demo.stl", "uploads/dev/peca_analise_demo.stl", 0.750],
     );
 
+    // Um pedido em 'na_fila' nunca pode existir sem base temporal completa
+    // (ver EtaEntregaService / pedidoEstaProntoParaFila) — os dados abaixo
+    // simulam um ETA já calculado, coerentes com tempo_gcode_horas=2.00 e
+    // prazo_entrega_horas=48.00.
     const pedidoFilaId = await insert(
       `INSERT INTO pedidos (
          nome, preco, descricao, status, id_usuario, id_material, id_qualidade, id_arquivo,
          parametros, quantidade, gcode_path, tempo_estimado_s, material_gramas,
          score_complexidade, preco_base, taxa_complexidade, taxa_stripe,
-         tempo_gcode_horas, prazo_entrega_horas, prioridade_paga
-       ) VALUES (?, ?, ?, 'na_fila', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         tempo_gcode_horas, prazo_entrega_horas, prioridade_paga,
+         tempo_exec_farm_horas, eta_horas_estimado, eta_calculado_em,
+         prazo_entrega, prazo_entrega_original, limite_inicio_impressao,
+         tempo_maximo_espera_horas, buffer_prioridade_horas, buffer_seguranca_horas
+       ) VALUES (
+         ?, ?, ?, 'na_fila', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         ?, ?, NOW(),
+         DATE_ADD(NOW(), INTERVAL 48 HOUR), DATE_ADD(NOW(), INTERVAL 48 HOUR), DATE_ADD(NOW(), INTERVAL 45 HOUR),
+         ?, ?, ?
+       )`,
       [
         "Pedido de fila demonstrativo", 24.90, "Dados genéricos de desenvolvimento.", clienteId,
         plaId, qualidadeNormalId, stlFilaId, JSON.stringify({ preenchimento: 20 }), 1,
         "gcode_storage/dev/pedido_fila_demo.gcode", 7200, 42.5000, 0.1500, 22.00, 0.00, 2.90,
         2.00, 48.00, 0,
+        2.30, 48.00,
+        45.70, 4.80, 8.00,
       ],
     );
     const pedidoConcluidoId = await insert(

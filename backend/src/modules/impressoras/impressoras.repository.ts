@@ -64,6 +64,11 @@ export interface ImpressoraOtimizacaoRow {
   tempoParaFicarLivreHoras: number;
   capacidadeDiaHoras: number;
   horasUsadasHoje?: number;
+  // Mesa física, usada para filtrar peças incompatíveis (Fase 20). Opcional
+  // para não forçar todo consumidor existente a informar — quando ausente,
+  // a checagem de compatibilidade simplesmente não filtra essa impressora.
+  larguraMesaMm?: number | null;
+  profundidadeMesaMm?: number | null;
 }
 
 export interface CreateImpressoraRepositoryDTO {
@@ -205,6 +210,8 @@ function mapImpressoraOtimizacao(row: any): ImpressoraOtimizacaoRow {
     tempoParaFicarLivreHoras: toNumber(row.tempoParaFicarLivreHoras),
     capacidadeDiaHoras: toNumber(row.capacidadeDiaHoras),
     horasUsadasHoje: toNumber(row.horasUsadasHoje),
+    larguraMesaMm: mapNullableNumber(row.larguraMesaMm),
+    profundidadeMesaMm: mapNullableNumber(row.profundidadeMesaMm),
   };
 }
 
@@ -582,7 +589,31 @@ export class ImpressoraRepository {
     }
   }
 
+  /**
+   * Impressoras elegíveis para planejamento e atribuição imediatos: só as que
+   * estão livres agora ou já em execução (usada pelo `FilaService`).
+   */
   async findParaOtimizacao(): Promise<ImpressoraOtimizacaoRow[]> {
+    return this.buscarOtimizacaoPorStatus(["Ociosa", "Imprimindo"]);
+  }
+
+  /**
+   * Impressoras que compõem a capacidade futura da farm para o cálculo de
+   * ETA (`EtaEntregaService`). Inclui impressoras já reservadas — elas
+   * representam trabalho comprometido, não capacidade livre agora — mas
+   * exclui estados claramente indisponíveis (Erro, Manutenção, Indisponível).
+   * Deliberadamente não é a mesma consulta usada para atribuição imediata:
+   * "elegível para planejar agora" e "pertence à capacidade da farm" são
+   * conceitos diferentes.
+   */
+  async findParaCalculoEta(): Promise<ImpressoraOtimizacaoRow[]> {
+    return this.buscarOtimizacaoPorStatus(["Ociosa", "Reservada", "Imprimindo"]);
+  }
+
+  private async buscarOtimizacaoPorStatus(
+    statuses: PrinterStatus[],
+  ): Promise<ImpressoraOtimizacaoRow[]> {
+    const placeholders = statuses.map(() => "?").join(", ");
     const [rows] = await db.execute(
       `
       SELECT
@@ -593,6 +624,8 @@ export class ImpressoraRepository {
         i.taxa_erro_recente AS taxaErroRecente,
         i.tempo_para_ficar_livre_horas AS tempoParaFicarLivreHoras,
         i.capacidade_dia_horas AS capacidadeDiaHoras,
+        i.largura_mesa_mm AS larguraMesaMm,
+        i.profundidade_mesa_mm AS profundidadeMesaMm,
         CASE
           WHEN i.data_referencia_capacidade = CURDATE() THEN i.horas_usadas_hoje
           ELSE 0
@@ -600,9 +633,10 @@ export class ImpressoraRepository {
       FROM impressoras i
       LEFT JOIN impressora_slots_filamento slot1
         ON slot1.id_impressora = i.id AND slot1.numero_slot = 1
-      WHERE i.status IN ('Ociosa', 'Imprimindo')
+      WHERE i.status IN (${placeholders})
       ORDER BY i.id ASC
       `,
+      statuses,
     );
     const impressoras = (rows as any[]).map(mapImpressoraOtimizacao);
     if (impressoras.length === 0) return impressoras;
@@ -613,8 +647,9 @@ export class ImpressoraRepository {
               sf.id_material AS idMaterial
        FROM impressora_slots_filamento sf
        INNER JOIN impressoras i ON i.id = sf.id_impressora
-       WHERE i.status IN ('Ociosa', 'Imprimindo')
+       WHERE i.status IN (${placeholders})
        ORDER BY sf.id_impressora, sf.numero_slot`,
+      statuses,
     );
     const porId = new Map(impressoras.map((impressora) => [impressora.id, impressora]));
     for (const row of slotRows as any[]) {

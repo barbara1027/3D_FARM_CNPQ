@@ -63,9 +63,9 @@ export class ArquivoController {
    *               items:
    *                 $ref: '#/components/schemas/Arquivo'
    */
-  listar = async (_req: Request, res: Response) => {
+  listar = async (req: Request, res: Response) => {
     try {
-      return res.status(200).json(await this.arquivoService.listar());
+      return res.status(200).json(await this.arquivoService.listar(req.jwtUser!));
     } catch (error: any) {
       return res.status(500).json({ message: error.message });
     }
@@ -101,6 +101,13 @@ export class ArquivoController {
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
       const arquivo = await this.arquivoService.buscarPorId(id);
       if (!arquivo) return res.status(404).json({ message: "Arquivo não encontrado." });
+      const user = req.jwtUser!;
+      // Fase 29: cliente comum só acessa metadados dos próprios arquivos.
+      // `idUsuario` nulo (arquivo antigo, anterior a esta coluna) só é
+      // visível para admin — nunca assume propriedade por omissão de dado.
+      if (user.tipo !== "admin" && arquivo.idUsuario !== user.sub) {
+        return res.status(403).json({ message: "Acesso negado." });
+      }
       return res.status(200).json(arquivo);
     } catch (error: any) {
       return res.status(500).json({ message: error.message });
@@ -150,6 +157,7 @@ export class ArquivoController {
         tipo,
         caminho: file.path,
         tamanhoMb,
+        idUsuario: req.jwtUser!.sub,
       });
 
       return res.status(201).json(arquivo);

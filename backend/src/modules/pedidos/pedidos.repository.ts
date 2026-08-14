@@ -1,4 +1,5 @@
 import { db } from "../../database/connection";
+import { DadosBaseTemporal, pedidoEstaProntoParaFila } from "./baseTemporal.service";
 
 export type StatusPedido =
   | "analisando"           // slicer rodando em background
@@ -45,6 +46,10 @@ export interface Pedido {
   bufferPrioridadeHoras: number | null;
   bufferSegurancaHoras: number | null;
   tempoExecFarmHoras: number | null;
+  // dimensões físicas da peça (bounding box do G-code, ver Fase 7)
+  dimensaoXMm: number | null;
+  dimensaoYMm: number | null;
+  dimensaoZMm: number | null;
   // campos JOIN
   nomeUsuario?: string;
   emailUsuario?: string;
@@ -54,15 +59,35 @@ export interface Pedido {
   idArquivoGcode?: number | null;
 }
 
+/**
+ * Pedido validado e pronto para a heurística de fila / cálculo de workload.
+ * Diferente do `Pedido` geral (onde os campos temporais podem ser `null`
+ * enquanto o pedido ainda está em `analisando`), todo campo aqui é
+ * obrigatório: `findPendentesParaOtimizacao` só devolve pedidos que já
+ * passaram por `pedidoEstaProntoParaFila`.
+ */
 export interface PedidoOtimizacaoRow {
   id: number;
   idMaterial: number;
   tempoGcodeHoras: number;
+  prazoEntrega: string;
+  prazoEntregaOriginal: string;
   prazoEntregaHoras: number;
-  tempoMaximoEsperaHoras: number | null;
-  limiteInicioImpressao: string | null;
+  limiteInicioImpressao: string;
+  etaHorasEstimado: number;
+  etaCalculadoEm: string;
+  tempoExecFarmHoras: number;
+  tempoMaximoEsperaHoras: number;
+  bufferPrioridadeHoras: number;
+  bufferSegurancaHoras: number;
   criadoEm: Date;
   prioridadePaga: boolean;
+  // Dimensões físicas da peça (Fase 7/20) — opcionais: pedidos antigos ou
+  // sem G-code analisado não bloqueiam a fila por falta desse dado; nesse
+  // caso a checagem de compatibilidade com a mesa simplesmente não filtra.
+  dimensaoXMm: number | null;
+  dimensaoYMm: number | null;
+  dimensaoZMm: number | null;
 }
 
 export interface CreatePedidoRepositoryDTO {
@@ -131,20 +156,42 @@ function toBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === "1" || value === "true";
 }
 
-function toNullableNumber(value: unknown): number | null {
+/** `NULL`/`undefined` viram `null`, nunca `0` — ao contrário de `Number(null) === 0`. */
+export function toNullableNumber(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
 }
 
-function mapPedidoOtimizacao(row: any): PedidoOtimizacaoRow {
+/** Candidato à otimização ainda não validado: qualquer campo temporal pode estar ausente. */
+type CandidatoOtimizacao = DadosBaseTemporal & {
+  id: number;
+  idMaterial: number;
+  criadoEm: Date;
+  prioridadePaga: boolean;
+  dimensaoXMm: number | null;
+  dimensaoYMm: number | null;
+  dimensaoZMm: number | null;
+};
+
+function mapCandidatoOtimizacao(row: any): CandidatoOtimizacao {
   return {
     id: toNumber(row.id),
     idMaterial: toNumber(row.idMaterial),
-    tempoGcodeHoras: toNumber(row.tempoGcodeHoras),
-    prazoEntregaHoras: toNumber(row.prazoEntregaHoras),
-    tempoMaximoEsperaHoras: toNullableNumber(row.tempoMaximoEsperaHoras),
+    tempoGcodeHoras: toNullableNumber(row.tempoGcodeHoras),
+    tempoExecFarmHoras: toNullableNumber(row.tempoExecFarmHoras),
+    etaHorasEstimado: toNullableNumber(row.etaHorasEstimado),
+    etaCalculadoEm: row.etaCalculadoEm ?? null,
+    prazoEntregaHoras: toNullableNumber(row.prazoEntregaHoras),
+    prazoEntrega: row.prazoEntrega ?? null,
+    prazoEntregaOriginal: row.prazoEntregaOriginal ?? null,
     limiteInicioImpressao: row.limiteInicioImpressao ?? null,
+    tempoMaximoEsperaHoras: toNullableNumber(row.tempoMaximoEsperaHoras),
+    bufferPrioridadeHoras: toNullableNumber(row.bufferPrioridadeHoras),
+    bufferSegurancaHoras: toNullableNumber(row.bufferSegurancaHoras),
     criadoEm: row.criadoEm,
     prioridadePaga: toBoolean(row.prioridadePaga),
+    dimensaoXMm: toNullableNumber(row.dimensaoXMm),
+    dimensaoYMm: toNullableNumber(row.dimensaoYMm),
+    dimensaoZMm: toNullableNumber(row.dimensaoZMm),
   };
 }
 
@@ -177,6 +224,9 @@ const SEL = `
     p.buffer_prioridade_horas AS bufferPrioridadeHoras,
     p.buffer_seguranca_horas AS bufferSegurancaHoras,
     p.tempo_exec_farm_horas AS tempoExecFarmHoras,
+    p.dimensao_x_mm AS dimensaoXMm,
+    p.dimensao_y_mm AS dimensaoYMm,
+    p.dimensao_z_mm AS dimensaoZMm,
     DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%sZ') AS createdAt,
     DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updatedAt,
     u.nome   AS nomeUsuario,
@@ -210,25 +260,39 @@ export class PedidoRepository {
     return ((rows as any[])[0] ?? null);
   }
 
+  /**
+   * Pedidos elegíveis para a heurística de fila. Devolve datas absolutas
+   * (não horas corridas já subtraídas em SQL) — a conversão para horas
+   * operacionais restantes é responsabilidade de quem consome esta lista
+   * (`FilaService`, via `calcularHorasOperacionaisEntre`), pois só assim a
+   * fila usa a mesma definição de jornada que o `EtaEntregaService`.
+   *
+   * Nenhum pedido sem base temporal válida é devolvido: a heurística não
+   * pode inventar um prazo/ETA para um registro incompleto. Um pedido em
+   * `na_fila` sem base temporal é um estado inconsistente (não deveria
+   * acontecer, dado que todos os caminhos para `na_fila` validam antes) —
+   * quando ocorre, é ignorado aqui e registrado no log em vez de afetar o
+   * escalonamento.
+   */
   async findPendentesParaOtimizacao(): Promise<PedidoOtimizacaoRow[]> {
     const [rows] = await db.execute(`
       SELECT
         p.id,
         p.id_material AS idMaterial,
         p.tempo_gcode_horas AS tempoGcodeHoras,
-        CASE
-          WHEN p.prazo_entrega IS NOT NULL
-            THEN TIMESTAMPDIFF(MINUTE, NOW(), p.prazo_entrega) / 60
-          ELSE p.prazo_entrega_horas
-        END AS prazoEntregaHoras,
-        CASE
-          WHEN p.limite_inicio_impressao IS NOT NULL
-            THEN TIMESTAMPDIFF(MINUTE, NOW(), p.limite_inicio_impressao) / 60
-          WHEN p.tempo_maximo_espera_horas IS NOT NULL
-            THEN p.tempo_maximo_espera_horas - TIMESTAMPDIFF(MINUTE, p.created_at, NOW()) / 60
-          ELSE NULL
-        END AS tempoMaximoEsperaHoras,
+        p.tempo_exec_farm_horas AS tempoExecFarmHoras,
+        p.dimensao_x_mm AS dimensaoXMm,
+        p.dimensao_y_mm AS dimensaoYMm,
+        p.dimensao_z_mm AS dimensaoZMm,
+        p.eta_horas_estimado AS etaHorasEstimado,
+        DATE_FORMAT(p.eta_calculado_em, '%Y-%m-%d %H:%i:%s') AS etaCalculadoEm,
+        p.prazo_entrega_horas AS prazoEntregaHoras,
+        DATE_FORMAT(p.prazo_entrega, '%Y-%m-%d %H:%i:%s') AS prazoEntrega,
+        DATE_FORMAT(p.prazo_entrega_original, '%Y-%m-%d %H:%i:%s') AS prazoEntregaOriginal,
         DATE_FORMAT(p.limite_inicio_impressao, '%Y-%m-%d %H:%i:%s') AS limiteInicioImpressao,
+        p.tempo_maximo_espera_horas AS tempoMaximoEsperaHoras,
+        p.buffer_prioridade_horas AS bufferPrioridadeHoras,
+        p.buffer_seguranca_horas AS bufferSegurancaHoras,
         p.created_at AS criadoEm,
         p.prioridade_paga AS prioridadePaga
       FROM pedidos p
@@ -242,7 +306,18 @@ export class PedidoRepository {
       ORDER BY p.created_at ASC, p.id ASC
     `);
 
-    return (rows as any[]).map(mapPedidoOtimizacao);
+    const validos: PedidoOtimizacaoRow[] = [];
+    for (const candidato of (rows as any[]).map(mapCandidatoOtimizacao)) {
+      if (!pedidoEstaProntoParaFila(candidato)) {
+        console.error(
+          `[PedidoRepository] Pedido ${candidato.id} está em 'na_fila' sem base temporal ` +
+            "válida; ignorado no planejamento da fila.",
+        );
+        continue;
+      }
+      validos.push(candidato as PedidoOtimizacaoRow);
+    }
+    return validos;
   }
 
   async create(data: CreatePedidoRepositoryDTO): Promise<number> {

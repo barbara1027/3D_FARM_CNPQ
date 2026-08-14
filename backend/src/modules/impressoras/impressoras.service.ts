@@ -14,7 +14,7 @@ import { ArquivoRepository } from "../arquivos/arquivos.repository";
 import { PedidoRepository } from "../pedidos/pedidos.repository";
 import { PrinterAdapterFactory } from "./comunicacao/printer-adapter.factory";
 import { ImpressoraOrquestradorService } from "./comunicacao/orquestrador.service";
-import { PrinterHealthCheckResult } from "./comunicacao/tipos";
+import { PrinterHealthCheckResult, PrinterRuntimeStatus } from "./comunicacao/tipos";
 
 export interface ProgressoImpressora {
   progressoPct: number | null;
@@ -30,6 +30,10 @@ const REPLANEJADOR_FILA_NOOP: ReplanejadorFila = {
   async reescalonarFilaVirtual(): Promise<void> {},
 };
 
+// tempoParaFicarLivreHoras NÃO é um campo de entrada do admin: ele reflete o
+// estado real da impressora (Ociosa=0, Imprimindo/Reservada=duração do job
+// atual, refinado pelo PrinterMonitorWorker via Moonraker) e é escrito
+// somente pelo próprio backend em PedidoImpressoraRepository. Ver Fase 2.
 export interface CreateImpressoraServiceDTO {
   nome: string;
   modelo: string;
@@ -45,7 +49,6 @@ export interface CreateImpressoraServiceDTO {
   filamentosCarregados?: SlotFilamentoInput[];
   eficiencia?: number;
   taxaErroRecente?: number;
-  tempoParaFicarLivreHoras?: number;
   capacidadeDiaHoras?: number;
 }
 
@@ -63,7 +66,6 @@ export interface UpdateImpressoraServiceDTO {
   profundidadeMesaMm?: number;
   eficiencia?: number;
   taxaErroRecente?: number;
-  tempoParaFicarLivreHoras?: number;
   capacidadeDiaHoras?: number;
 }
 
@@ -185,7 +187,6 @@ export class ImpressoraService {
     validarNumeroOpcional(data.timeoutMs, "timeoutMs", (numero) => Number.isSafeInteger(numero) && numero > 0, "deve ser um inteiro positivo");
     validarNumeroOpcional(data.eficiencia, "eficiencia", (numero) => numero > 0, "deve ser um número maior que zero");
     validarNumeroOpcional(data.taxaErroRecente, "taxaErroRecente", (numero) => numero >= 0 && numero <= 1, "deve estar entre zero e um");
-    validarNumeroOpcional(data.tempoParaFicarLivreHoras, "tempoParaFicarLivreHoras", (numero) => numero >= 0, "deve ser um número maior ou igual a zero");
     validarNumeroOpcional(data.capacidadeDiaHoras, "capacidadeDiaHoras", (numero) => numero > 0, "deve ser um número maior que zero");
   }
 
@@ -291,6 +292,17 @@ export class ImpressoraService {
       throw new ImpressoraServiceError(
         "Esvazie os slots 2, 3 e 4 antes de remover o CFS.",
         409,
+      );
+    }
+    // Admin colocou a impressora num estado não planejável (Erro,
+    // Manutenção, Indisponível, Aguardando Remoção): qualquer job futuro
+    // ainda preso a ela precisa ser reavaliado agora (Fase 4).
+    if (
+      data.status !== undefined &&
+      !["Ociosa", "Reservada", "Imprimindo"].includes(data.status)
+    ) {
+      this.orquestrador.reagirAImpressoraIndisponivel(id).catch((err) =>
+        console.error("[ImpressoraService] Falha ao reagir à indisponibilidade:", err.message),
       );
     }
     return this.obterImpressoraOuFalhar(id);
@@ -420,6 +432,16 @@ export class ImpressoraService {
 
   async listarEventos(idImpressora: number, limit = 20) {
     return this.orquestrador.listarEventos(idImpressora, limit);
+  }
+
+  /**
+   * Consulta silenciosa de status usada pelo `PrinterMonitorWorker`: nunca
+   * lança, apenas persiste o estado observado (inclusive conclusão/falha
+   * automática, já tratadas dentro do orquestrador) e devolve `null` em caso
+   * de erro de comunicação.
+   */
+  async monitorarStatusSilencioso(id: number): Promise<PrinterRuntimeStatus | null> {
+    return this.orquestrador.sincronizarStatusSilencioso(id);
   }
 
   async obterProgresso(id: number): Promise<ProgressoImpressora> {

@@ -47,10 +47,22 @@ export function gcodeOutputPath(pedidoId: number): string {
   return path.join(dir, `pedido_${pedidoId}.gcode`);
 }
 
+const CENTRO_PADRAO_MM = { x: 110, y: 110 };
+
+export interface BedCenter {
+  x: number;
+  y: number;
+}
+
 export async function runPrusaSlicer(
   stlPath:    string,
   outputPath: string,
   params:     SliceParams = {},
+  // Centro da mesa usado pelo slicer. Não assume mais uma mesa fixa
+  // 220×220: quem chama informa o centro real (ou o maior conhecido entre
+  // as impressoras cadastradas — ver auto-slice.service.ts), garantindo que
+  // o G-code não fique deslocado para máquinas com mesa maior/menor.
+  bedCenter:  BedCenter = CENTRO_PADRAO_MM,
 ): Promise<void> {
   const prusaExe = process.env.PRUSA_SLICER_PATH ??
     "/Applications/PrusaSlicer.app/Contents/MacOS/PrusaSlicer";
@@ -58,11 +70,15 @@ export async function runPrusaSlicer(
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   const p = { ...DEFAULTS, ...params };
+  const centro = {
+    x: Number.isFinite(bedCenter?.x) && bedCenter.x > 0 ? bedCenter.x : CENTRO_PADRAO_MM.x,
+    y: Number.isFinite(bedCenter?.y) && bedCenter.y > 0 ? bedCenter.y : CENTRO_PADRAO_MM.y,
+  };
 
   const args: string[] = [
     "--slice",
     "--gcode-comments",
-    "--center",              "110,110",
+    "--center",              `${centro.x},${centro.y}`,
     "--scale",               "1",
     "--layer-height",        p.layerHeight,
     "--fill-density",        `${p.infill}%`,

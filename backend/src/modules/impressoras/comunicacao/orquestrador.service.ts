@@ -7,6 +7,7 @@ import {
   PedidoImpressoraRepository,
   ReservaAlocacao,
 } from "../../fila/pedidoImpressora.repository";
+import { JobImpressaoRepository } from "../../fila/jobsImpressao.repository";
 import { Pedido, PedidoRepository } from "../../pedidos/pedidos.repository";
 import { emailImpressoraErro, emailPedidoConcluido } from "../../../services/email.service";
 import { Impressora, ImpressoraRepository, SlotFilamento } from "../impressoras.repository";
@@ -121,6 +122,7 @@ export class ImpressoraOrquestradorService {
     ),
     private readonly aguardar: (milissegundos: number) => Promise<void> =
       (milissegundos) => new Promise((resolve) => setTimeout(resolve, milissegundos)),
+    private readonly jobImpressaoRepository = new JobImpressaoRepository(),
   ) {
     // A referência continua injetável e pronta para o fluxo de arquivos, sem I/O no construtor.
     void this.arquivoRepository;
@@ -260,6 +262,35 @@ export class ImpressoraOrquestradorService {
       );
     }
     return atribuicoes;
+  }
+
+  /**
+   * Gatilho de replanejamento por evento (Fase 4): quando uma impressora
+   * fica indisponível (Erro/Manutenção/Indisponível/Aguardando Remoção) —
+   * seja por falha detectada pelo monitor Moonraker, seja por ação do admin
+   * — qualquer plano futuro (`na_fila`/`aguardando_filamento`) ainda preso a
+   * ela é invalidado e a fila é reavaliada imediatamente, em vez de esperar
+   * a varredura periódica. Não mexe em reservas/execuções ativas, que já têm
+   * seu próprio tratamento de falha.
+   */
+  async reagirAImpressoraIndisponivel(idImpressora: number): Promise<void> {
+    try {
+      const invalidados =
+        await this.pedidoImpressoraRepository.invalidarPlanejamentoDaImpressora(idImpressora);
+      if (invalidados > 0) {
+        console.log(
+          `[ORQUESTRADOR] ${invalidados} alocação(ões) futura(s) da impressora ${idImpressora} ` +
+            "invalidada(s) após indisponibilidade; replanejando.",
+        );
+      }
+      await this.filaService.reescalonarFilaVirtual();
+      await this.tentarAtribuirAutomaticamente();
+    } catch (error) {
+      console.error(
+        `[ORQUESTRADOR] Falha ao reagir à indisponibilidade da impressora ${idImpressora}:`,
+        mensagemErro(error, "erro desconhecido"),
+      );
+    }
   }
 
   async atribuirPedido(impressoraId: number, pedidoId: number): Promise<AssignPrintJobResult> {
@@ -405,6 +436,18 @@ export class ImpressoraOrquestradorService {
         throw new InicioFisicoIncertoError(mensagem);
       }
 
+      // Marca a próxima unidade física (job) deste pedido como iniciada
+      // nesta impressora (Fase 6). Best-effort: pedidos sem jobs cadastrados
+      // (fluxo anterior à Fase 6) continuam funcionando normalmente.
+      await this.jobImpressaoRepository
+        .marcarProximoEmImpressao(pedido.id, impressora.id)
+        .catch((err) =>
+          console.error(
+            `[ORQUESTRADOR] Falha ao marcar job em execução (pedido ${pedido.id}):`,
+            mensagemErro(err, "erro desconhecido"),
+          ),
+        );
+
       return {
         impressora: await this.obterImpressoraOuFalhar(impressora.id),
         pedidoId: pedido.id,
@@ -443,6 +486,10 @@ export class ImpressoraOrquestradorService {
           modelo: impressora.modelo,
           ultimoErro: mensagem,
         });
+        // Se esta falha derrubou a impressora (ou ela já estava incerta),
+        // qualquer plano futuro preso a ela precisa ser reavaliado agora, não
+        // só na próxima varredura periódica.
+        this.reagirAImpressoraIndisponivel(impressora.id).catch(() => {});
       }
       throw error instanceof Error ? error : new Error(mensagem);
     }
@@ -811,6 +858,15 @@ export class ImpressoraOrquestradorService {
                 ? status.mensagem ?? "Erro informado pela impressora."
                 : null,
           }),
+      // tempo_para_ficar_livre_horas refinado com o tempo restante real
+      // reportado pelo Moonraker, sempre que a impressora ainda está
+      // efetivamente imprimindo o job atual (nunca sobrescreve um estado
+      // incerto/reservado com um número inventado).
+      ...(impressora.status === "Imprimindo" &&
+      status.statusDominio === "Imprimindo" &&
+      status.tempoRestanteS != null
+        ? { tempoParaFicarLivreHoras: Math.max(0, status.tempoRestanteS / 3600) }
+        : {}),
       ultimaSincronizacao: agoraSql(),
     });
   }
@@ -864,6 +920,11 @@ export class ImpressoraOrquestradorService {
         impressora.idPedidoAtual,
         status.mensagem ?? `Falha física: ${status.statusFisico}.`,
       );
+      // A impressora acabou de virar 'Erro'. Qualquer job futuro que já
+      // estivesse planejado para ela (ex.: K2 com unidade atual + unidades
+      // futuras da fila) não pode continuar preso a uma máquina quebrada —
+      // reavalia agora em vez de esperar a varredura periódica.
+      this.reagirAImpressoraIndisponivel(impressora.id).catch(() => {});
       return;
     }
     if (status.statusDominio !== "Ociosa") return;

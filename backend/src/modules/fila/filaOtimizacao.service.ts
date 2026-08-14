@@ -7,6 +7,11 @@ export interface PedidoOtimizacao {
   limiteInicioImpressao?: string | Date | null;
   criadoEm: string | Date;
   prioridadePaga: boolean;
+  // Bounding box da peça (Fase 7), em mm. Opcional/nulo quando desconhecida
+  // — nesse caso a checagem de compatibilidade com a mesa (Fase 20) não filtra.
+  dimensaoXMm?: number | null;
+  dimensaoYMm?: number | null;
+  dimensaoZMm?: number | null;
 }
 
 export interface SlotFilamentoOtimizacao {
@@ -24,6 +29,10 @@ export interface ImpressoraOtimizacao {
   tempoParaFicarLivreHoras: number;
   capacidadeDiaHoras: number;
   horasUsadasHoje?: number;
+  // Mesa física (Fase 20), em mm. Opcional/nula quando desconhecida — nesse
+  // caso a impressora nunca é descartada por incompatibilidade de tamanho.
+  larguraMesaMm?: number | null;
+  profundidadeMesaMm?: number | null;
 }
 
 export type StatusInicialAlocacao = "na_fila" | "aguardando_filamento";
@@ -360,6 +369,9 @@ export class FilaOtimizacaoService {
     if (impressora.eficiencia <= 0) {
       return null;
     }
+    if (!this.cabeNaMesa(pedido, impressora)) {
+      return null;
+    }
 
     const taxaErro = this.normalizarTaxaErro(impressora.taxaErroRecente);
     const tempoReal = pedido.tempoGcodeHoras / impressora.eficiencia;
@@ -397,6 +409,30 @@ export class FilaOtimizacaoService {
       violouTempoMaximoEspera,
       custo,
     };
+  }
+
+  /**
+   * Fase 20: uma peça maior que a mesa nunca pode virar candidata, em nenhuma
+   * das duas orientações XY (rotação em Z é permitida; altura não gira).
+   * Quando a peça ou a mesa têm dimensão desconhecida, não filtra — a
+   * ausência de dado nunca é tratada como incompatibilidade.
+   */
+  private cabeNaMesa(pedido: PedidoOtimizacao, impressora: EstadoImpressora): boolean {
+    const largura = impressora.larguraMesaMm;
+    const profundidade = impressora.profundidadeMesaMm;
+    if (largura == null || profundidade == null || largura <= 0 || profundidade <= 0) {
+      return true;
+    }
+
+    const x = pedido.dimensaoXMm;
+    const y = pedido.dimensaoYMm;
+    if (x == null || y == null || x <= 0 || y <= 0) {
+      return true;
+    }
+
+    const cabeSemGirar = x <= largura && y <= profundidade;
+    const cabeGirado = x <= profundidade && y <= largura;
+    return cabeSemGirar || cabeGirado;
   }
 
   private resolverMaterialPlanejado(
@@ -582,17 +618,24 @@ export class FilaOtimizacaoService {
 
   private normalizarPedido(pedido: PedidoOtimizacao): PedidoOtimizacao | null {
     const tempoGcodeHoras = Number(pedido.tempoGcodeHoras);
+    // Sem fallback: um pedido sem prazoEntregaHoras válido não recebe um
+    // prazo inventado (24h ou qualquer outro). A verificação de
+    // Number.isFinite abaixo descarta silenciosamente o registro inválido —
+    // ele já deveria ter sido barrado antes de chegar em 'na_fila'.
     const normalizado: PedidoOtimizacao = {
       id: Number(pedido.id),
       idMaterial: Number(pedido.idMaterial),
       tempoGcodeHoras,
-      prazoEntregaHoras: this.normalizarNumero(pedido.prazoEntregaHoras, 24),
+      prazoEntregaHoras: Number(pedido.prazoEntregaHoras),
       tempoMaximoEsperaHoras: this.normalizarNumeroOpcional(
         pedido.tempoMaximoEsperaHoras,
       ),
       limiteInicioImpressao: pedido.limiteInicioImpressao ?? null,
       criadoEm: pedido.criadoEm,
       prioridadePaga: this.normalizarBooleano(pedido.prioridadePaga),
+      dimensaoXMm: this.normalizarNumeroOpcional(pedido.dimensaoXMm),
+      dimensaoYMm: this.normalizarNumeroOpcional(pedido.dimensaoYMm),
+      dimensaoZMm: this.normalizarNumeroOpcional(pedido.dimensaoZMm),
     };
 
     if (
@@ -654,6 +697,8 @@ export class FilaOtimizacaoService {
           Math.max(0, this.normalizarNumero(impressora.horasUsadasHoje, 0)),
       ),
       proximaPosicaoFila: 1,
+      larguraMesaMm: this.normalizarNumeroOpcional(impressora.larguraMesaMm),
+      profundidadeMesaMm: this.normalizarNumeroOpcional(impressora.profundidadeMesaMm),
     };
 
     if (

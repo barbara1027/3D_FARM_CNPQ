@@ -3,6 +3,7 @@ import { FilaService } from "./modules/fila/fila.service";
 import { PedidoRepository } from "./modules/pedidos/pedidos.repository";
 import { ImpressoraRepository } from "./modules/impressoras/impressoras.repository";
 import { ImpressoraService } from "./modules/impressoras/impressoras.service";
+import { PrinterMonitorWorker } from "./modules/impressoras/printerMonitor.worker";
 
 const impressoraRepository = new ImpressoraRepository();
 const filaService = new FilaService(new PedidoRepository(), impressoraRepository);
@@ -11,6 +12,7 @@ const impressoraService = new ImpressoraService(
   undefined,
   filaService,
 );
+const printerMonitorWorker = new PrinterMonitorWorker(impressoraRepository, impressoraService);
 
 export async function reescalonarFila(): Promise<void> {
   try {
@@ -74,4 +76,5 @@ export function startSchedulers(): void {
   console.log(`[Scheduler] Reescalonamento diário agendado: ${expr}`);
 
   iniciarAtribuicaoPeriodica();
+  printerMonitorWorker.iniciar();
 }

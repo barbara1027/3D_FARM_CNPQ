@@ -413,6 +413,74 @@ test("material manual ainda não carregado não torna pedidos seguintes executá
   );
 });
 
+test("pedido sem prazo de entrega valido (NaN) nao entra na otimizacao", () => {
+  const resultado = new FilaOtimizacaoService().simularFilasDiarias(
+    [pedido(1, { prazoEntregaHoras: Number.NaN })],
+    [impressora(1)],
+    4,
+  );
+
+  assert.deepEqual(resultado.alocacoes, []);
+  assert.deepEqual(resultado.pedidosNaoAlocados, []);
+});
+
+test("pedido sem prazo de entrega definido (undefined) tambem nao entra e nao herda 24h", () => {
+  const resultado = new FilaOtimizacaoService().simularFilasDiarias(
+    [pedido(1, { prazoEntregaHoras: undefined as unknown as number })],
+    [impressora(1)],
+    4,
+  );
+
+  assert.deepEqual(resultado.alocacoes, []);
+  assert.deepEqual(resultado.pedidosNaoAlocados, []);
+});
+
+test("pedido sem tempo de gcode valido (zero ou negativo) nao entra na otimizacao", () => {
+  const resultado = new FilaOtimizacaoService().simularFilasDiarias(
+    [pedido(1, { tempoGcodeHoras: 0 }), pedido(2, { tempoGcodeHoras: -1 })],
+    [impressora(1)],
+    4,
+  );
+
+  assert.deepEqual(resultado.alocacoes, []);
+  assert.deepEqual(resultado.pedidosNaoAlocados, []);
+});
+
+test("peca maior que a mesa em qualquer orientacao nao e atribuida a impressora incompativel", () => {
+  const resultado = new FilaOtimizacaoService().simularFilasDiarias(
+    [pedido(1, { dimensaoXMm: 300, dimensaoYMm: 300 })],
+    [impressora(1, { larguraMesaMm: 220, profundidadeMesaMm: 220 })],
+    4,
+  );
+
+  assert.deepEqual(resultado.alocacoes, []);
+});
+
+test("peca que so cabe girada (X > largura mas X <= profundidade) e atribuida normalmente", () => {
+  const alocacoes = montar(
+    [pedido(1, { dimensaoXMm: 250, dimensaoYMm: 100 })],
+    [impressora(1, { larguraMesaMm: 220, profundidadeMesaMm: 260 })],
+  );
+
+  assert.equal(alocacoes.length, 1);
+});
+
+test("dimensao ou mesa desconhecida nunca bloqueia a atribuicao", () => {
+  const alocacoes = montar(
+    [pedido(1, { dimensaoXMm: null, dimensaoYMm: null })],
+    [impressora(1, { larguraMesaMm: null, profundidadeMesaMm: null })],
+  );
+
+  assert.equal(alocacoes.length, 1);
+});
+
+test("pedido com base temporal valida continua sendo escalonado normalmente", () => {
+  const alocacoes = montar([pedido(1, { prazoEntregaHoras: 5 })], [impressora(1)]);
+
+  assert.equal(alocacoes.length, 1);
+  assert.equal(alocacoes[0].idPedido, 1);
+});
+
 test("atraso inevitavel de pedido pago recebe peso maior sem alterar setup ou risco", () => {
   const [alocacao] = montar(
     [

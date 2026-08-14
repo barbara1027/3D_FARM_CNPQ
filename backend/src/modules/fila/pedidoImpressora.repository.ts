@@ -1,4 +1,5 @@
 import { db } from "../../database/connection";
+import { JobImpressaoRepository } from "./jobsImpressao.repository";
 
 export type StatusPedidoImpressora =
   | "na_fila"
@@ -182,6 +183,10 @@ function normalizarPlanejamento(item: PlanejamentoFilaInput): Required<Planejame
 }
 
 export class PedidoImpressoraRepository {
+  constructor(
+    private readonly jobImpressaoRepository = new JobImpressaoRepository(),
+  ) {}
+
   async substituirPlanejamento(alocacoes: readonly PlanejamentoFilaInput[]): Promise<void> {
     const normalizadas = alocacoes.map(normalizarPlanejamento);
     const ids = new Set<number>();
@@ -401,6 +406,26 @@ export class PedidoImpressoraRepository {
     return (rows as any[]).length > 0;
   }
 
+  /**
+   * Invalida (remove) o planejamento ainda não executável — `na_fila` e
+   * `aguardando_filamento` — que apontava para uma impressora que acabou de
+   * ficar indisponível (Erro/Manutenção/Indisponível/Aguardando Remoção).
+   * Não toca `reservado`/`em_impressao`: a execução ativa já é tratada pelos
+   * fluxos existentes de falha (`falharExecucao`, `bloquearReservaComInicioIncerto`).
+   * Os pedidos cujo plano foi removido continuam `na_fila` e voltam a
+   * aparecer para `possuiPedidosPendentesSemPlano`, permitindo que o próximo
+   * reescalonamento os realoque para uma impressora viável.
+   */
+  async invalidarPlanejamentoDaImpressora(idImpressora: number): Promise<number> {
+    validarInteiroPositivo(idImpressora, "idImpressora");
+    const [result]: any = await db.execute(
+      `DELETE FROM pedido_impressora
+       WHERE id_impressora = ? AND status IN ('na_fila', 'aguardando_filamento')`,
+      [idImpressora],
+    );
+    return Number(result.affectedRows ?? 0);
+  }
+
   async reservarProximaAlocacao(idImpressora?: number): Promise<ReservaAlocacao | null> {
     if (idImpressora !== undefined) validarInteiroPositivo(idImpressora, "idImpressora");
     return this.reservarComFiltro(idImpressora, undefined);
@@ -594,7 +619,8 @@ export class PedidoImpressoraRepository {
         await connection.execute(
           `UPDATE impressoras
            SET status = 'Ociosa', id_pedido_atual = NULL,
-               job_remoto_id = NULL, ultimo_erro = NULL
+               job_remoto_id = NULL, ultimo_erro = NULL,
+               tempo_para_ficar_livre_horas = 0
            WHERE id = ? AND id_pedido_atual = ?`,
           [row.idImpressora, row.idPedido],
         );
@@ -669,7 +695,7 @@ export class PedidoImpressoraRepository {
       await connection.execute(
         `UPDATE impressoras
          SET status = ?, id_pedido_atual = NULL, job_remoto_id = NULL,
-             ultimo_erro = ?, ultima_sincronizacao = NOW()
+             ultimo_erro = ?, tempo_para_ficar_livre_horas = 0, ultima_sincronizacao = NOW()
          WHERE id = ?`,
         [opcoes.bloquearImpressora ? "Erro" : "Ociosa", mensagem, row.idImpressora],
       );
@@ -813,15 +839,23 @@ export class PedidoImpressoraRepository {
         "UPDATE pedidos SET status = 'em_impressao' WHERE id = ? AND status = 'na_fila'",
         [row.idPedido],
       );
+      // tempo_para_ficar_livre_horas passa a refletir a duração real esperada
+      // do job que acabou de iniciar (tempo já ajustado por eficiência/erro
+      // pelo planejamento), em vez de depender de edição manual do admin.
+      // O monitor Moonraker (PrinterMonitorWorker) refina esse valor depois
+      // com o tempo restante real assim que a impressora reporta progresso.
+      const horasPrevistas = Number(row.tempoTotalHoras ?? data.horasConsumidas ?? 0);
       const [printerUpdate]: any = await connection.execute(
         `UPDATE impressoras
          SET status = 'Imprimindo', job_remoto_id = ?,
              status_fisico = COALESCE(?, status_fisico), ultimo_erro = NULL,
+             tempo_para_ficar_livre_horas = ?,
              ultima_sincronizacao = NOW()
          WHERE id = ? AND status = ? AND id_pedido_atual = ?`,
         [
           data.jobRemotoId ?? null,
           data.statusFisico ?? null,
+          Number.isFinite(horasPrevistas) && horasPrevistas > 0 ? horasPrevistas : 0,
           row.idImpressora,
           statusImpressoraEsperado,
           row.idPedido,
@@ -927,18 +961,49 @@ export class PedidoImpressoraRepository {
         throw new PedidoImpressoraStateError("A execução ativa não corresponde ao pedido e à impressora.");
       }
 
+      // Fecha o job físico (jobs_impressao) desta impressora para este
+      // pedido, se existir. Um pedido com quantidade > 1 gera vários jobs
+      // (Fase 6); cada execução física fecha apenas o seu próprio job.
+      await connection.execute(
+        `UPDATE jobs_impressao
+         SET status = ?, finished_at = NOW(),
+             tempo_real_horas = TIMESTAMPDIFF(SECOND, started_at, NOW()) / 3600,
+             erro = ?
+         WHERE id_pedido = ? AND id_impressora = ? AND status = 'em_impressao'
+         ORDER BY id
+         LIMIT 1`,
+        [destino, destino === "falhou" ? mensagem : null, idPedido, idImpressora],
+      );
+
+      // Só marca o pedido comercial como 'concluido' quando não sobrar
+      // nenhuma unidade física pendente. Enquanto houver jobs 'pendente',
+      // o pedido volta para 'na_fila' para que a próxima unidade seja
+      // replanejada (possivelmente em outra impressora). Falha nunca
+      // continua para a próxima unidade — todo o pedido falha (fail-safe).
+      let statusPedidoFinal: "concluido" | "falhou" | "na_fila" = destino;
+      if (destino === "concluido") {
+        const [pendentesRows] = await connection.execute(
+          `SELECT COUNT(*) AS pendentes FROM jobs_impressao WHERE id_pedido = ? AND status = 'pendente'`,
+          [idPedido],
+        );
+        const pendentes = numero((pendentesRows as any[])[0]?.pendentes ?? 0);
+        if (pendentes > 0) {
+          statusPedidoFinal = "na_fila";
+        }
+      }
+
       const [allocationUpdate]: any = await connection.execute(
         "UPDATE pedido_impressora SET status = ? WHERE id = ? AND status = 'em_impressao'",
         [destino, row.id],
       );
       const [orderUpdate]: any = await connection.execute(
         "UPDATE pedidos SET status = ? WHERE id = ? AND status = 'em_impressao'",
-        [destino, idPedido],
+        [statusPedidoFinal, idPedido],
       );
       const [printerUpdate]: any = await connection.execute(
         `UPDATE impressoras
          SET status = ?, id_pedido_atual = NULL, job_remoto_id = NULL,
-             ultimo_erro = ?, ultima_sincronizacao = NOW()
+             ultimo_erro = ?, tempo_para_ficar_livre_horas = 0, ultima_sincronizacao = NOW()
          WHERE id = ? AND id_pedido_atual = ?`,
         [destino === "concluido" ? "Aguardando Remoção" : "Erro", destino === "falhou" ? mensagem : null, idImpressora, idPedido],
       );
@@ -954,17 +1019,52 @@ export class PedidoImpressoraRepository {
         idImpressora,
         destino === "concluido" ? "job_finished" : "job_failed",
         mensagem,
-        { idAlocacao: numero(row.id), pedidoId: idPedido },
+        { idAlocacao: numero(row.id), pedidoId: idPedido, statusPedidoFinal },
       );
       await connection.commit();
       transactionStarted = false;
-      return true;
+
+      // Fase 13: recalcula eficiência/taxa de erro da impressora a partir
+      // do histórico real de jobs, fora da transação principal (estatística
+      // derivada, best-effort — nunca deve derrubar a finalização do job).
+      this.atualizarEstatisticasImpressora(idImpressora).catch((err) =>
+        console.error(
+          `[PedidoImpressoraRepository] Falha ao recalcular estatísticas da impressora ${idImpressora}:`,
+          err.message,
+        ),
+      );
+
+      // `true` só quando o pedido está de fato encerrado (todas as unidades
+      // concluídas, ou falha) — sinaliza ao chamador que pode notificar o
+      // cliente. `false` quando ainda há unidades pendentes.
+      return statusPedidoFinal === destino;
     } catch (error) {
       if (transactionStarted) await connection.rollback();
       throw error;
     } finally {
       connection.release();
     }
+  }
+
+  private async atualizarEstatisticasImpressora(idImpressora: number): Promise<void> {
+    const { eficiencia, taxaErro, amostras } =
+      await this.jobImpressaoRepository.calcularEstatisticasRecentes(idImpressora);
+    if (amostras === 0) return;
+
+    const campos: string[] = [];
+    const valores: unknown[] = [];
+    if (eficiencia !== null) {
+      campos.push("eficiencia = ?");
+      valores.push(eficiencia);
+    }
+    if (taxaErro !== null) {
+      campos.push("taxa_erro_recente = ?");
+      valores.push(taxaErro);
+    }
+    if (campos.length === 0) return;
+
+    valores.push(idImpressora);
+    await db.execute(`UPDATE impressoras SET ${campos.join(", ")} WHERE id = ?`, valores);
   }
 
   async cancelarPlanejamentoDoPedido(idPedido: number): Promise<ResultadoCancelamentoPedido> {
@@ -1045,6 +1145,7 @@ export class PedidoImpressoraRepository {
     const [rows] = await connection.execute(
       `SELECT pi.id, pi.id_pedido AS idPedido, pi.id_impressora AS idImpressora,
               pi.status, pi.tentativas_inicio AS tentativasInicio,
+              pi.tempo_total_horas AS tempoTotalHoras,
               p.status AS statusPedido, p.id_material AS idMaterialPedido,
               i.status AS statusImpressora, i.id_pedido_atual AS idPedidoAtual
        FROM pedido_impressora pi

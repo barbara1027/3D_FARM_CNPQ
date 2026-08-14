@@ -3,11 +3,14 @@ import {
   ImpressoraRepository,
 } from "../impressoras/impressoras.repository";
 import { PedidoOtimizacaoRow, PedidoRepository } from "./pedidos.repository";
+import {
+  adicionarHorasOperacionais,
+  getJornadaHorasDia,
+  getJornadaInicioHora,
+} from "../../shared/tempo/tempoOperacional";
 
 const ETA_BUFFER_PERCENTUAL_PADRAO = 0.2;
 const FATOR_INTERFERENCIA_PRIORIDADE_PADRAO = 0.1;
-const JORNADA_INICIO_HORA_PADRAO = 8;
-const JORNADA_HORAS_DIA_PADRAO = 8;
 const SETUP_MEDIO_FARM_HORAS_PADRAO = 0.3;
 
 export interface CalcularEtaPedidoInput {
@@ -65,69 +68,22 @@ function formatarDataMysql(data: Date): string {
   )}:${pad(data.getMinutes())}:${pad(data.getSeconds())}`;
 }
 
-export function adicionarHorasUteis(
-  dataInicial: Date,
-  horasUteis: number,
-  horaInicioExpediente = JORNADA_INICIO_HORA_PADRAO,
-  horasPorDia = JORNADA_HORAS_DIA_PADRAO,
-): Date {
-  const horasRestantesNormalizadas = Math.max(0, Number(horasUteis) || 0);
-  const inicioHora = Math.max(0, Math.min(23, Math.floor(horaInicioExpediente)));
-  const duracaoDia = Math.min(
-    24 - inicioHora,
-    normalizarNumeroPositivo(horasPorDia, JORNADA_HORAS_DIA_PADRAO),
-  );
-  const fimHora = inicioHora + duracaoDia;
-  let horasRestantes = horasRestantesNormalizadas;
-  const cursor = new Date(dataInicial);
-
-  const moverParaInicioDoDia = () => {
-    cursor.setHours(inicioHora, 0, 0, 0);
-  };
-
-  const moverParaProximoDia = () => {
-    cursor.setDate(cursor.getDate() + 1);
-    moverParaInicioDoDia();
-  };
-
-  const horaDecimalAtual = () =>
-    cursor.getHours() + cursor.getMinutes() / 60 + cursor.getSeconds() / 3600;
-
-  if (horaDecimalAtual() < inicioHora) {
-    moverParaInicioDoDia();
-  } else if (horaDecimalAtual() >= fimHora) {
-    moverParaProximoDia();
-  }
-
-  while (horasRestantes > 0) {
-    const horasDisponiveisHoje = Math.max(0, fimHora - horaDecimalAtual());
-
-    if (horasDisponiveisHoje === 0) {
-      moverParaProximoDia();
-      continue;
-    }
-
-    const horasConsumidas = Math.min(horasRestantes, horasDisponiveisHoje);
-    cursor.setTime(cursor.getTime() + horasConsumidas * 60 * 60 * 1000);
-    horasRestantes -= horasConsumidas;
-
-    if (horasRestantes > 0) {
-      moverParaProximoDia();
-    }
-  }
-
-  return cursor;
-}
-
 export class EtaEntregaService {
   constructor(
     private readonly pedidoRepository: PedidoRepository,
     private readonly impressoraRepository: ImpressoraRepository,
   ) {}
 
+  /**
+   * Calcula o ETA para um pedido novo (ou reimpresso) usando a capacidade
+   * atual da farm. Usa `findParaCalculoEta`, não `findParaOtimizacao`: a
+   * capacidade considerada aqui inclui impressoras reservadas (compromisso
+   * futuro da farm), enquanto o planejamento imediato da fila (`FilaService`)
+   * só pode contar com impressoras livres agora.
+   */
   async calcularParaNovoPedido(data: CalcularEtaPedidoInput): Promise<ResultadoEtaEntrega> {
     const pedidosPendentes = await this.pedidoRepository.findPendentesParaOtimizacao();
-    const impressoras = await this.impressoraRepository.findParaOtimizacao();
+    const impressoras = await this.impressoraRepository.findParaCalculoEta();
 
     return this.calcularEtaNovoPedido(data, pedidosPendentes, impressoras);
   }
@@ -166,10 +122,7 @@ export class EtaEntregaService {
         SETUP_MEDIO_FARM_HORAS_PADRAO,
       ),
       capacidadeDiariaTotal,
-      jornadaHorasDia: normalizarNumeroPositivo(
-        process.env.JORNADA_HORAS_DIA,
-        JORNADA_HORAS_DIA_PADRAO,
-      ),
+      jornadaHorasDia: getJornadaHorasDia(),
     };
   }
 
@@ -233,16 +186,17 @@ export class EtaEntregaService {
       normalizarPercentual(process.env.ETA_BUFFER_PERCENTUAL, ETA_BUFFER_PERCENTUAL_PADRAO);
     const etaHorasEstimado = etaParcial + bufferSegurancaHoras;
     const tempoMaximoEsperaHoras = Math.max(0, etaHorasEstimado - tempoExecFarmHoras);
-    const limiteInicioImpressao = adicionarHorasUteis(
+    const jornadaInicioHora = getJornadaInicioHora();
+    const limiteInicioImpressao = adicionarHorasOperacionais(
       dataBase,
       tempoMaximoEsperaHoras,
-      normalizarNumeroPositivo(process.env.JORNADA_INICIO_HORA, JORNADA_INICIO_HORA_PADRAO),
+      jornadaInicioHora,
       metricasFarm.jornadaHorasDia,
     );
-    const prazoEntrega = adicionarHorasUteis(
+    const prazoEntrega = adicionarHorasOperacionais(
       dataBase,
       etaHorasEstimado,
-      normalizarNumeroPositivo(process.env.JORNADA_INICIO_HORA, JORNADA_INICIO_HORA_PADRAO),
+      jornadaInicioHora,
       metricasFarm.jornadaHorasDia,
     );
     const prazoEntregaFormatado = formatarDataMysql(prazoEntrega);

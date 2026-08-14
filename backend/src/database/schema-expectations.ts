@@ -13,6 +13,8 @@ export const SCHEMA_FILES = [
   "008_create_impressora_eventos.sql",
   "009_create_chat_mensagens.sql",
   "010_add_arquivos_pedido_fk.sql",
+  "011_create_jobs_impressao.sql",
+  "012_create_pagamentos.sql",
 ] as const;
 
 export const EXPECTED_TABLES = [
@@ -26,6 +28,8 @@ export const EXPECTED_TABLES = [
   "pedido_impressora",
   "impressora_eventos",
   "chat_mensagens",
+  "jobs_impressao",
+  "pagamentos",
 ] as const;
 
 export interface ExpectedColumn {

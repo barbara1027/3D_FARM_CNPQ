@@ -5,13 +5,17 @@ export interface CreateArquivoServiceDTO {
   tipo: TipoArquivo;
   caminho: string;
   tamanhoMb?: number;
+  idUsuario?: number | null;
 }
 
 export class ArquivoService {
   constructor(private readonly arquivoRepository: ArquivoRepository) {}
 
-  async listar(): Promise<Arquivo[]> {
-    return this.arquivoRepository.findAll();
+  /** Admin vê todos os arquivos; cliente comum só os seus (Fase 29). */
+  async listar(usuario: { tipo: string; sub: number }): Promise<Arquivo[]> {
+    return usuario.tipo === "admin"
+      ? this.arquivoRepository.findAll()
+      : this.arquivoRepository.findByUsuario(usuario.sub);
   }
 
   async buscarPorId(id: number): Promise<Arquivo | null> {
@@ -19,7 +23,7 @@ export class ArquivoService {
   }
 
   async criar(data: CreateArquivoServiceDTO): Promise<Arquivo | null> {
-    const id = await this.arquivoRepository.create(data);
+    const id = await this.arquivoRepository.create({ ...data, idUsuario: data.idUsuario ?? null });
     return this.arquivoRepository.findById(id);
   }
 

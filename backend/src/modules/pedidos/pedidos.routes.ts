@@ -1,17 +1,23 @@
 import path from "path";
 import { Router, Request, Response } from "express";
 import { PedidoController } from "./pedidos.controller";
-import { PedidoRepository } from "./pedidos.repository";
+import { PedidoRepository, toNullableNumber } from "./pedidos.repository";
 import { PedidoService } from "./pedidos.service";
 import { authMiddleware, adminMiddleware } from "../../middleware/auth.middleware";
 import { criarSessaoCheckout } from './pagamentos.service';
 import { db } from "../../database/connection";
+import { EtaEntregaService, ResultadoEtaEntrega } from "./etaEntrega.service";
+import { ImpressoraRepository } from "../impressoras/impressoras.repository";
+import { pedidoEstaProntoParaFila, preservarPrazoEntregaOriginal } from "./baseTemporal.service";
+import { JobImpressaoRepository } from "../fila/jobsImpressao.repository";
 
 const pedidosRoutes = Router();
 
 const repo       = new PedidoRepository();
 const service    = new PedidoService(repo);
 const controller = new PedidoController(service);
+const etaEntregaService = new EtaEntregaService(repo, new ImpressoraRepository());
+const jobImpressaoRepository = new JobImpressaoRepository();
 
 // CRUD
 pedidosRoutes.get("/",     authMiddleware, controller.listar);
@@ -19,6 +25,37 @@ pedidosRoutes.get("/:id",  authMiddleware, controller.buscarPorId);
 pedidosRoutes.post("/",    authMiddleware, controller.criar);
 pedidosRoutes.put("/:id",  authMiddleware, controller.atualizar);
 pedidosRoutes.delete("/:id", authMiddleware, adminMiddleware, controller.remover);
+
+/**
+ * POST /pedidos/:id/prioridade — Admin ativa/desativa prioridade paga (Fase 9/25).
+ * Único caminho que pode setar prioridade_paga: nunca vem direto do cliente
+ * (não existe em `criar`/`atualizar` do PedidoController).
+ */
+pedidosRoutes.post("/:id/prioridade", authMiddleware, adminMiddleware,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+    const ativa = req.body?.prioridadePaga;
+    if (typeof ativa !== "boolean") {
+      return res.status(400).json({ message: "prioridadePaga deve ser booleano." });
+    }
+    try {
+      const [updateResult]: any = await db.execute(
+        "UPDATE pedidos SET prioridade_paga = ? WHERE id = ?",
+        [ativa ? 1 : 0, id],
+      );
+      if (Number(updateResult.affectedRows) !== 1) {
+        return res.status(404).json({ message: "Pedido não encontrado." });
+      }
+      const [rows]: any = await db.execute(
+        "SELECT id, prioridade_paga AS prioridadePaga FROM pedidos WHERE id = ? LIMIT 1", [id]
+      );
+      return res.status(200).json(rows[0]);
+    } catch (e: any) {
+      return res.status(500).json({ message: e.message });
+    }
+  }
+);
 
 /**
  * @swagger
@@ -272,11 +309,18 @@ pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
     if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
     try {
       const [existing]: any = await db.execute(
-        "SELECT status, gcode_path FROM pedidos WHERE id = ? LIMIT 1", [id]
+        `SELECT
+           status, gcode_path, quantidade,
+           id_material AS idMaterial,
+           prioridade_paga AS prioridadePaga,
+           tempo_gcode_horas AS tempoGcodeHoras,
+           prazo_entrega_original AS prazoEntregaOriginal
+         FROM pedidos WHERE id = ? LIMIT 1`, [id]
       );
       if (!existing?.length) return res.status(404).json({ message: "Pedido não encontrado." });
 
-      const { status, gcode_path } = existing[0];
+      const pedidoAtual = existing[0];
+      const { status, gcode_path } = pedidoAtual;
       if (!gcode_path) {
         return res.status(409).json({
           message: "Pedido não pode ser reimpresso: G-code ainda não foi gerado para ele.",
@@ -288,17 +332,93 @@ pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
         });
       }
 
+      // Reimpressão volta para 'na_fila': recalcula os dados temporais atuais
+      // (a farm pode ter mudado desde a última vez), mas nunca sobrescreve o
+      // compromisso original assumido com o cliente.
+      const tempoGcodeHoras = toNullableNumber(pedidoAtual.tempoGcodeHoras);
+      if (tempoGcodeHoras === null || tempoGcodeHoras <= 0) {
+        return res.status(409).json({
+          message: "Pedido não pode ser reimpresso: tempo de G-code desconhecido para recalcular o prazo.",
+        });
+      }
+
+      let resultadoEta: ResultadoEtaEntrega;
+      try {
+        resultadoEta = await etaEntregaService.calcularParaNovoPedido({
+          idMaterial: Number(pedidoAtual.idMaterial),
+          tempoGcodeHoras,
+          prioridadePaga: Boolean(pedidoAtual.prioridadePaga),
+        });
+      } catch (etaError: any) {
+        return res.status(409).json({
+          message: `Não foi possível recalcular o prazo de entrega para a reimpressão: ${etaError.message}`,
+        });
+      }
+
+      const dadosTemporais = {
+        tempoGcodeHoras,
+        tempoExecFarmHoras: resultadoEta.tempoExecFarmHoras,
+        etaHorasEstimado: resultadoEta.etaHorasEstimado,
+        etaCalculadoEm: resultadoEta.etaCalculadoEm,
+        prazoEntregaHoras: resultadoEta.prazoEntregaHoras,
+        prazoEntrega: resultadoEta.prazoEntrega,
+        prazoEntregaOriginal: preservarPrazoEntregaOriginal(
+          pedidoAtual.prazoEntregaOriginal,
+          resultadoEta.prazoEntregaOriginal,
+        ),
+        limiteInicioImpressao: resultadoEta.limiteInicioImpressao,
+        tempoMaximoEsperaHoras: resultadoEta.tempoMaximoEsperaHoras,
+        bufferPrioridadeHoras: resultadoEta.bufferPrioridadeHoras,
+        bufferSegurancaHoras: resultadoEta.bufferSegurancaHoras,
+      };
+      if (!pedidoEstaProntoParaFila(dadosTemporais)) {
+        return res.status(409).json({
+          message: "Não foi possível recalcular uma base temporal válida para a reimpressão.",
+        });
+      }
+
       const [updateResult]: any = await db.execute(
-        `UPDATE pedidos
-         SET status = 'na_fila', updated_at = NOW()
+        `UPDATE pedidos SET
+           status                    = 'na_fila',
+           tempo_exec_farm_horas     = ?,
+           eta_horas_estimado        = ?,
+           eta_calculado_em          = ?,
+           prazo_entrega_horas       = ?,
+           prazo_entrega             = ?,
+           prazo_entrega_original    = ?,
+           limite_inicio_impressao   = ?,
+           tempo_maximo_espera_horas = ?,
+           buffer_prioridade_horas   = ?,
+           buffer_seguranca_horas    = ?,
+           updated_at                = NOW()
          WHERE id = ? AND status IN ('concluido', 'falhou')`,
-        [id]
+        [
+          dadosTemporais.tempoExecFarmHoras,
+          dadosTemporais.etaHorasEstimado,
+          dadosTemporais.etaCalculadoEm,
+          dadosTemporais.prazoEntregaHoras,
+          dadosTemporais.prazoEntrega,
+          dadosTemporais.prazoEntregaOriginal,
+          dadosTemporais.limiteInicioImpressao,
+          dadosTemporais.tempoMaximoEsperaHoras,
+          dadosTemporais.bufferPrioridadeHoras,
+          dadosTemporais.bufferSegurancaHoras,
+          id,
+        ]
       );
       if (Number(updateResult.affectedRows) !== 1) {
         return res.status(409).json({
           message: "O estado do pedido mudou durante a solicitação de reimpressão.",
         });
       }
+      // Abre um novo lote de unidades físicas para esta reimpressão
+      // (Fase 6) — o histórico do lote anterior é preservado.
+      const quantidade = Number(pedidoAtual.quantidade) || 1;
+      await jobImpressaoRepository
+        .recriarJobsParaPedido(id, quantidade, tempoGcodeHoras / quantidade)
+        .catch((err) =>
+          console.error(`[REIMPRIMIR] Falha ao criar jobs do pedido ${id}:`, err.message),
+        );
       const [rows]: any = await db.execute(
         "SELECT id, status FROM pedidos WHERE id = ? LIMIT 1", [id]
       );
