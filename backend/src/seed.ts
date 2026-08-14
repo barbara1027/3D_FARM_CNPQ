@@ -53,7 +53,7 @@ export async function seedDevelopmentData(): Promise<void> {
     transactionStarted = true;
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const insert = async (sql: string, values: unknown[]): Promise<number> => {
+    const insert = async (sql: string, values: any[]): Promise<number> => {
       const [result] = await connection.execute<ResultSetHeader>(sql, values);
       return result.insertId;
     };

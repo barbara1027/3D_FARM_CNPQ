@@ -48,6 +48,9 @@ function pedidoBase(overrides: Partial<Pedido> = {}): Pedido {
     bufferPrioridadeHoras: null,
     bufferSegurancaHoras: null,
     tempoExecFarmHoras: null,
+    dimensaoXMm: null,
+    dimensaoYMm: null,
+    dimensaoZMm: null,
     ...overrides,
   };
 }

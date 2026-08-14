@@ -62,7 +62,7 @@ function integrationConfig() {
 async function insertId(
   connection: Connection,
   sql: string,
-  values: unknown[],
+  values: any[],
 ): Promise<number> {
   const [result]: any = await connection.execute(sql, values);
   return Number(result.insertId);

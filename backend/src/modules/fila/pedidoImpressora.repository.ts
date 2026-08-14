@@ -339,7 +339,9 @@ export class PedidoImpressoraRepository {
 
   async listarPlano(filtro: FiltroPlano = {}): Promise<PedidoImpressoraPlanejado[]> {
     const where: string[] = [];
-    const values: unknown[] = [];
+    // any[], não unknown[]: os tipos do mysql2 (ExecuteValues[]) não aceitam
+    // unknown[] em db.execute — mesmo padrão usado no resto do repositório.
+    const values: any[] = [];
     if (filtro.idImpressora !== undefined) {
       validarInteiroPositivo(filtro.idImpressora, "idImpressora");
       where.push("id_impressora = ?");
@@ -447,7 +449,7 @@ export class PedidoImpressoraRepository {
       await connection.beginTransaction();
       transactionStarted = true;
       const filters: string[] = [];
-      const values: unknown[] = [];
+      const values: any[] = [];
       if (idImpressora !== undefined) {
         filters.push("pi.id_impressora = ?");
         values.push(idImpressora);
@@ -1052,7 +1054,7 @@ export class PedidoImpressoraRepository {
     if (amostras === 0) return;
 
     const campos: string[] = [];
-    const valores: unknown[] = [];
+    const valores: any[] = [];
     if (eficiencia !== null) {
       campos.push("eficiencia = ?");
       valores.push(eficiencia);
