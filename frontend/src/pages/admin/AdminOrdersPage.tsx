@@ -24,7 +24,12 @@ const STATUS_TABS: { label: string; statuses: StatusPedido[] }[] = [
   { label: 'Concluídos',         statuses: ['concluido'] },
   { label: 'Falhas/Cancelados',  statuses: ['falhou', 'cancelado'] },
 ];
-const ALL_STATUSES: StatusPedido[] = ['na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado'];
+// O backend só aceita status operacional setado diretamente pelo admin para
+// 'cancelado' — todo o resto é resultado das transições da fila
+// (pedidos.service.ts: "O status operacional do pedido só pode ser alterado
+// pelas transições da fila."). Oferecer os outros valores aqui só gerava um
+// 500 disfarçado de "Erro ao atualizar status." sem nunca funcionar.
+const STATUSES_EDITAVEIS: StatusPedido[] = ['cancelado'];
 
 function TabPanel({ children, value, index }: { children?: React.ReactNode; value: number; index: number }) {
   return value === index ? <Box sx={{ pt: 2, height: 'calc(100% - 48px)' }}>{children}</Box> : null;
@@ -85,8 +90,8 @@ export function AdminOrdersPage() {
       await api.post(`/pedidos/${pedido.id}/reimprimir`);
       setSelected(null);
       fetchPedidos();
-    } catch {
-      setError('Erro ao reimprimir.');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Erro ao reimprimir.');
     }
   };
 
@@ -104,7 +109,9 @@ export function AdminOrdersPage() {
       setEditOpen(false);
       setSelected(null);
       fetchPedidos();
-    } catch { setError('Erro ao atualizar status.'); }
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Erro ao atualizar status.');
+    }
   };
 
   const cols: GridColDef<Pedido>[] = [
@@ -132,9 +139,13 @@ export function AdminOrdersPage() {
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setSelected(row)}><VisibilityIcon /></IconButton>
-          <IconButton size="small" onClick={() => { setSelected(row); setNewStatus(row.status); setEditOpen(true); }}>
-            <EditIcon />
-          </IconButton>
+          {row.status !== 'concluido' && row.status !== 'cancelado' && (
+            <Tooltip title="Cancelar pedido">
+              <IconButton size="small" onClick={() => { setSelected(row); setNewStatus('cancelado'); setEditOpen(true); }}>
+                <EditIcon />
+              </IconButton>
+            </Tooltip>
+          )}
           <Tooltip title="Chat com cliente">
             <IconButton size="small" onClick={() => setChatPedido({ id: row.id, nome: row.nome })}>
               <Badge badgeContent={unreadMap[row.id] || 0} color="error" variant="dot">
@@ -199,7 +210,10 @@ export function AdminOrdersPage() {
                 Baixar STL
               </Button>
             </Tooltip>
-            {(selected.status === 'falhou' || selected.status === 'concluido' || selected.status === 'em_impressao') && (
+            {/* Backend só aceita reimprimir a partir de 'concluido'/'falhou'
+                (pedidos.routes.ts: WHERE status IN ('concluido', 'falhou')) —
+                'em_impressao' sempre voltava 409. */}
+            {(selected.status === 'falhou' || selected.status === 'concluido') && (
               <Tooltip title="Reenviar para a fila de impressão">
                 <Button
                   startIcon={<ReplayIcon />}
@@ -218,7 +232,11 @@ export function AdminOrdersPage() {
                 Chat
               </Button>
             </Badge>
-            <Button onClick={() => { setNewStatus(selected.status); setEditOpen(true); }}>Editar Status</Button>
+            {selected.status !== 'concluido' && selected.status !== 'cancelado' && (
+              <Button color="error" onClick={() => { setNewStatus('cancelado'); setEditOpen(true); }}>
+                Cancelar pedido
+              </Button>
+            )}
             <Button onClick={() => setSelected(null)}>Fechar</Button>
           </DialogActions>
         </Dialog>
@@ -232,24 +250,30 @@ export function AdminOrdersPage() {
         onClose={() => { setChatPedido(null); fetchUnreadResumo(); }}
       />
 
-      {/* Editar status */}
+      {/* Cancelar pedido — único status operacional que o admin pode setar
+          diretamente; qualquer outra transição é feita pela fila. */}
       {editOpen && selected && (
         <Dialog open onClose={() => setEditOpen(false)} maxWidth="xs" fullWidth>
-          <DialogTitle>Atualizar status — {selected.nome}</DialogTitle>
+          <DialogTitle>Cancelar pedido — {selected.nome}</DialogTitle>
           <DialogContent sx={{ pt: 2 }}>
-            <FormControl fullWidth>
+            <Typography color="text.secondary">
+              O status operacional deste pedido só muda automaticamente pelas
+              transições da fila de impressão. A única ação manual disponível
+              aqui é o cancelamento.
+            </Typography>
+            <FormControl fullWidth sx={{ mt: 2 }}>
               <InputLabel>Novo status</InputLabel>
               <Select label="Novo status" value={newStatus}
                 onChange={(e: SelectChangeEvent) => setNewStatus(e.target.value as StatusPedido)}>
-                {ALL_STATUSES.map(s => (
+                {STATUSES_EDITAVEIS.map(s => (
                   <MenuItem key={s} value={s}>{getStatusTranslation(s)}</MenuItem>
                 ))}
               </Select>
             </FormControl>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setEditOpen(false)}>Cancelar</Button>
-            <Button variant="contained" onClick={handleUpdateStatus}>Salvar</Button>
+            <Button onClick={() => setEditOpen(false)}>Voltar</Button>
+            <Button variant="contained" color="error" onClick={handleUpdateStatus}>Confirmar cancelamento</Button>
           </DialogActions>
         </Dialog>
       )}

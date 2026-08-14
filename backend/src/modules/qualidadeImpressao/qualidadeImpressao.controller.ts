@@ -168,7 +168,12 @@ export class QualidadeImpressaoController {
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
       return res.status(200).json(await this.qualidadeImpressaoService.remover(id));
     } catch (error: any) {
-      const statusCode = error.message === "Qualidade não encontrada." ? 404 : 500;
+      const statusCode =
+        error.message === "Qualidade não encontrada."
+          ? 404
+          : error.message.includes("vinculada a pedidos")
+            ? 409
+            : 500;
       return res.status(statusCode).json({ message: error.message });
     }
   };

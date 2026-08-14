@@ -36,10 +36,18 @@ arquivosRoutes.get("/:id/download", authMiddleware, async (req: Request, res: Re
     }
   }
 
-  // Path traversal guard
-  const BASE_DIR  = path.resolve(process.cwd());
-  const resolved  = path.resolve(arquivo.caminho);
-  if (!resolved.startsWith(BASE_DIR + path.sep) && resolved !== BASE_DIR) {
+  // Path traversal guard — restringe aos diretórios de armazenamento
+  // configurados (STL em UPLOAD_DIR, G-code em GCODE_DIR), não a
+  // process.cwd(): quando qualquer um dos dois é um caminho absoluto fora da
+  // pasta do backend, comparar com process.cwd() rejeitava até o dono
+  // legítimo do arquivo.
+  const UPLOAD_BASE_DIR = path.resolve(process.env.UPLOAD_DIR ?? "uploads");
+  const GCODE_BASE_DIR  = path.resolve(process.env.GCODE_DIR ?? "gcode_storage");
+  const resolved = path.resolve(arquivo.caminho);
+  const dentroDeUmDiretorioPermitido =
+    resolved === UPLOAD_BASE_DIR || resolved.startsWith(UPLOAD_BASE_DIR + path.sep) ||
+    resolved === GCODE_BASE_DIR  || resolved.startsWith(GCODE_BASE_DIR + path.sep);
+  if (!dentroDeUmDiretorioPermitido) {
     return res.status(403).json({ message: "Acesso negado." });
   }
 

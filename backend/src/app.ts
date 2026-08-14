@@ -50,14 +50,6 @@ const authLimiter = rateLimit({
   message: { message: "Muitas tentativas. Tente novamente em 15 minutos." },
 });
 
-const cadastroLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hora
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { message: "Limite de cadastros atingido. Tente novamente em 1 hora." },
-});
-
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), stripeWebhook);
 
 app.use(express.json());
@@ -90,7 +82,6 @@ app.get("/docs.json", (_req, res) => {
 });
 
 app.use("/auth/login", authLimiter);
-app.use("/usuarios", cadastroLimiter);
 app.use(router);
 
 app.get("/health", (_req, res) => {

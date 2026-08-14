@@ -60,7 +60,7 @@ async function maiorCentroDeMesaConhecido(): Promise<BedCenter | undefined> {
     if (!Number.isFinite(largura) || !Number.isFinite(profundidade) || largura <= 0 || profundidade <= 0) {
       return undefined;
     }
-    return { x: largura / 2, y: profundidade / 2 };
+    return { x: largura / 2, y: profundidade / 2, larguraMesaMm: largura, profundidadeMesaMm: profundidade };
   } catch {
     return undefined;
   }
@@ -177,7 +177,7 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       supportAngle:     userParams.supportAngle     ?? String(row.qAnguloSuporte ?? 45),
       supports: userParams.supports && userParams.supports !== "none"
         ? userParams.supports
-        : "touching_buildplate",
+        : (Number(row.qSuport) ? "touching_buildplate" : "none"),
       adhesion: userParams.adhesion && userParams.adhesion !== "none"
         ? userParams.adhesion
         : (Number(row.qAdesao) ? "brim" : "none"),
@@ -222,7 +222,10 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
     );
 
     const quantidade   = Math.max(1, Number(row.quantidade) || 1);
-    const pricePerGram = parseFloat(row.pricePerGram) || 0.12;
+    // `??` (não `||`): um material com preço legitimamente 0 (ex.: filamento
+    // doado) não pode ser trocado pelo fallback só porque 0 é falsy em JS.
+    const parsedPricePerGram = parseFloat(row.pricePerGram);
+    const pricePerGram = Number.isFinite(parsedPricePerGram) ? parsedPricePerGram : 0.12;
     const pricing      = calculatePrice(metrics, pricePerGram, complexity.score, complexity.isComplex);
 
     // Escala subtotal pela quantidade e aplica Stripe UMA VEZ sobre o total do pedido

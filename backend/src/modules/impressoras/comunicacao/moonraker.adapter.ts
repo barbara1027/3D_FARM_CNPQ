@@ -68,10 +68,17 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
 
     const estado = response.data?.result?.status?.print_stats?.state ?? "desconhecido";
     const webhooksState = response.data?.result?.status?.webhooks?.state ?? "desconhecido";
+    // `ok` precisa refletir se a impressora está de fato pronta para receber
+    // uma impressão (Klippy "ready"), não só se a requisição HTTP respondeu —
+    // senão o chamador (iniciarReserva) nunca detecta Klippy em erro/desligado
+    // antes de tentar o upload real.
+    const ok = webhooksState === "ready";
 
     return {
-      ok: true,
-      mensagem: `Moonraker acessível. print_stats=${estado}, webhooks=${webhooksState}.`,
+      ok,
+      mensagem: ok
+        ? `Moonraker acessível. print_stats=${estado}, webhooks=${webhooksState}.`
+        : `Moonraker respondeu, mas o Klippy não está pronto (webhooks=${webhooksState}, print_stats=${estado}).`,
       detalhes: response.data,
     };
   }
@@ -105,7 +112,19 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
         );
       }
     } catch (err: any) {
-      if (err.message.includes("Klippy")) throw err;
+      if (err instanceof Error && err.message.includes("Klippy")) throw err;
+      // Sem resposta nenhuma (rede indisponível, timeout, DNS, conexão
+      // recusada) é diferente de uma resposta HTTP inesperada de um firmware
+      // antigo: só o segundo caso é seguro degradar e seguir para o upload.
+      // O primeiro precisa falhar rápido, com diagnóstico claro, em vez de
+      // silenciosamente tentar o upload (até 60s) contra uma impressora
+      // inalcançável.
+      if (axios.isAxiosError(err) && !err.response) {
+        throw new Error(
+          `Não foi possível contatar a impressora em ${conexao.baseUrl} antes do upload: ` +
+          `${err.message}. Verifique a conectividade de rede antes de tentar novamente.`,
+        );
+      }
       console.warn(`[MoonrakerAdapter] Não foi possível verificar o estado do Klippy: ${err.message}`);
     }
 

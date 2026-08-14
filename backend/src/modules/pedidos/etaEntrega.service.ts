@@ -63,9 +63,14 @@ function limitarTaxaErro(value: unknown): number {
 function formatarDataMysql(data: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
 
-  return `${data.getFullYear()}-${pad(data.getMonth() + 1)}-${pad(data.getDate())} ${pad(
-    data.getHours(),
-  )}:${pad(data.getMinutes())}:${pad(data.getSeconds())}`;
+  // Getters UTC, não locais: a sessão MySQL do pool é forçada para UTC
+  // (database/connection.ts, SET SESSION time_zone = '+00:00'). Formatar com
+  // getFullYear/getHours (hora local do processo Node) gera um literal
+  // deslocado sempre que o servidor não estiver com o relógio em UTC,
+  // divergindo de NOW() na mesma sessão.
+  return `${data.getUTCFullYear()}-${pad(data.getUTCMonth() + 1)}-${pad(data.getUTCDate())} ${pad(
+    data.getUTCHours(),
+  )}:${pad(data.getUTCMinutes())}:${pad(data.getUTCSeconds())}`;
 }
 
 export class EtaEntregaService {

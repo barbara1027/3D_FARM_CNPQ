@@ -57,6 +57,10 @@ class InicioFisicoIncertoError extends Error {
 const MAX_ALOCACOES_POR_VARREDURA = 100;
 const CONFIRMACAO_INICIO_TIMEOUT_MS = 15_000;
 const CONFIRMACAO_INICIO_INTERVALO_MS = 1_000;
+// Teto do timeout HTTP de cada chamada de status durante a confirmação de
+// início, independente do timeoutMs configurado da impressora — ver
+// confirmarInicioFisico.
+const CONFIRMACAO_INICIO_POLL_HTTP_TIMEOUT_MS = 5_000;
 
 function agoraSql(): string {
   return new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -739,8 +743,24 @@ export class ImpressoraOrquestradorService {
     let ultimoJobDivergente: string | null = null;
 
     do {
+      // O timeout HTTP de cada chamada de status não pode ser deixado igual
+      // ao timeoutMs configurado da impressora: se ambos coincidirem (ex.:
+      // os dois em 15000ms), uma única chamada lenta consome sozinha todo o
+      // orçamento de confirmação e o início físico é declarado incerto mesmo
+      // com a impressão em andamento. Cada chamada de polling usa o menor
+      // entre o timeout configurado, um teto fixo e o tempo restante do
+      // orçamento total, garantindo várias tentativas dentro do orçamento.
+      const tempoRestanteMs = Math.max(1, timeoutMs - (Date.now() - inicio));
       const status = await adapter.getStatus({
         ...impressora,
+        timeoutMs: Math.max(
+          1000,
+          Math.min(
+            impressora.timeoutMs || CONFIRMACAO_INICIO_POLL_HTTP_TIMEOUT_MS,
+            CONFIRMACAO_INICIO_POLL_HTTP_TIMEOUT_MS,
+            tempoRestanteMs,
+          ),
+        ),
         jobRemotoId: identificadores.jobRemotoId ?? impressora.jobRemotoId,
       });
       if (status.statusDominio === "Imprimindo") {
