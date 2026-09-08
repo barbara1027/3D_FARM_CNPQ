@@ -5,10 +5,19 @@ import { ArquivoRepository } from "../../arquivos/arquivos.repository";
 import { FilaService } from "../../fila/fila.service";
 import {
   PedidoImpressoraRepository,
+  PedidoImpressoraStateError,
   ReservaAlocacao,
 } from "../../fila/pedidoImpressora.repository";
 import { Pedido, PedidoRepository } from "../../pedidos/pedidos.repository";
-import { emailImpressoraErro, emailPedidoConcluido } from "../../../services/email.service";
+import {
+  emailImpressoraErro,
+  emailPedidoConcluido,
+  emailClientePecaPronta,
+  emailClientePedidoFalhou,
+  emailAguardandoFilamento,
+  emailClienteImpressaoIniciada,
+  emailClienteCopiaConcluida,
+} from "../../../services/email.service";
 import { Impressora, ImpressoraRepository, SlotFilamento } from "../impressoras.repository";
 import { validarExtrusorLogicoMonomaterial } from "./gcode-logical-filament.parser";
 import { PrinterAdapterFactory } from "./printer-adapter.factory";
@@ -405,13 +414,28 @@ export class ImpressoraOrquestradorService {
         throw new InicioFisicoIncertoError(mensagem);
       }
 
+      await this.notificarImpressaoIniciada(pedido.id);
+
       return {
         impressora: await this.obterImpressoraOuFalhar(impressora.id),
         pedidoId: pedido.id,
         comunicacao,
       };
     } catch (error) {
-      if (error instanceof AguardandoFilamentoError) throw error;
+      if (error instanceof AguardandoFilamentoError) {
+        if (impressora) {
+          const pedidoAguardando = await this.pedidoRepository.findById(reserva.idPedido);
+          await emailAguardandoFilamento({
+            id: reserva.idPedido,
+            nome: pedidoAguardando?.nome ?? `Pedido ${reserva.idPedido}`,
+            nomeUsuario: pedidoAguardando?.nomeUsuario,
+            emailUsuario: pedidoAguardando?.emailUsuario,
+            impressora: impressora.nome,
+            motivo: error.message,
+          });
+        }
+        throw error;
+      }
       if (inicioConfirmadoFisicamente) {
         if (error instanceof InicioFisicoIncertoError) throw error;
         throw new InicioFisicoIncertoError(
@@ -427,7 +451,7 @@ export class ImpressoraOrquestradorService {
           { jobRemotoId: identificadorInicioPossivel },
         );
       } else {
-        await this.pedidoImpressoraRepository.marcarFalhaAntesDoInicio(
+        const resultadoFalha = await this.pedidoImpressoraRepository.marcarFalhaAntesDoInicio(
           reserva.idAlocacao,
           mensagem,
           {
@@ -435,6 +459,9 @@ export class ImpressoraOrquestradorService {
             bloquearImpressora: false,
           },
         );
+        if (resultadoFalha.status === "falhou") {
+          await this.notificarPedidoFalhou(reserva.idPedido, mensagem);
+        }
       }
       if (impressora) {
         await emailImpressoraErro({
@@ -748,12 +775,71 @@ export class ImpressoraOrquestradorService {
     }
 
     if (impressora.idPedidoAtual) {
-      const concluido = await this.pedidoImpressoraRepository.concluirExecucao(
+      const resultado = await this.pedidoImpressoraRepository.concluirExecucao(
         impressora.id,
         impressora.idPedidoAtual,
       );
-      if (concluido) await this.notificarPedidoConcluido(impressora.idPedidoAtual);
+      if (resultado.atualizado) {
+        if (resultado.copiaIntermediaria) {
+          await this.notificarCopiaConcluida(impressora.idPedidoAtual);
+        } else {
+          await this.notificarPedidoConcluido(impressora.idPedidoAtual);
+        }
+      }
     }
+    return this.obterImpressoraOuFalhar(impressoraId);
+  }
+
+  /**
+   * Parada manual: admin detectou um problema na impressão em andamento (ex.
+   * quantidade errada, falha visível) e a interrompe antes da conclusão.
+   * Cancela o job na impressora física (best-effort), devolve o pedido para
+   * "na_fila" mantendo a posição original no planejamento e libera a
+   * impressora para "Aguardando Remoção" até a peça malsucedida sair da mesa.
+   */
+  async pararImpressao(impressoraId: number): Promise<Impressora> {
+    const impressora = await this.obterImpressoraOuFalhar(impressoraId);
+
+    if (impressora.status !== "Imprimindo") {
+      throw new Error(
+        `Só é possível parar uma impressora que está imprimindo. Status atual: "${impressora.status}".`,
+      );
+    }
+    if (!impressora.idPedidoAtual) {
+      throw new Error("Impressora está imprimindo mas não possui pedido associado.");
+    }
+
+    const adapter = this.adapterFactory.getAdapter(impressora.api);
+
+    try {
+      await adapter.cancelarImpressao(impressora);
+    } catch (error) {
+      console.error(
+        `[ORQUESTRADOR] Falha ao cancelar impressão na impressora ${impressoraId}:`,
+        mensagemErro(error, "erro desconhecido"),
+      );
+    }
+
+    try {
+      await adapter.desligarAquecedores(impressora);
+    } catch (error) {
+      console.error(
+        `[ORQUESTRADOR] Falha ao desligar aquecedores da impressora ${impressoraId}:`,
+        mensagemErro(error, "erro desconhecido"),
+      );
+    }
+
+    const parado = await this.pedidoImpressoraRepository.pararExecucao(
+      impressora.id,
+      impressora.idPedidoAtual,
+      `Impressão interrompida pelo administrador. Pedido ${impressora.idPedidoAtual} devolvido para a fila.`,
+    );
+    if (!parado) {
+      throw new PedidoImpressoraStateError(
+        "A execução ativa não corresponde ao pedido e à impressora — reconcilie o estado antes de tentar novamente.",
+      );
+    }
+
     return this.obterImpressoraOuFalhar(impressoraId);
   }
 
@@ -859,11 +945,13 @@ export class ImpressoraOrquestradorService {
     if (impressora.status !== "Imprimindo" || !impressora.idPedidoAtual) return;
 
     if (status.statusDominio === "Erro") {
-      await this.pedidoImpressoraRepository.falharExecucao(
+      const motivo = status.mensagem ?? `Falha física: ${status.statusFisico}.`;
+      const falhou = await this.pedidoImpressoraRepository.falharExecucao(
         impressora.id,
         impressora.idPedidoAtual,
-        status.mensagem ?? `Falha física: ${status.statusFisico}.`,
+        motivo,
       );
+      if (falhou) await this.notificarPedidoFalhou(impressora.idPedidoAtual, motivo);
       return;
     }
     if (status.statusDominio !== "Ociosa") return;
@@ -876,18 +964,34 @@ export class ImpressoraOrquestradorService {
         mensagemErro(error, "erro desconhecido"),
       );
     }
-    const concluido = await this.pedidoImpressoraRepository.concluirExecucao(
+    const resultado = await this.pedidoImpressoraRepository.concluirExecucao(
       impressora.id,
       impressora.idPedidoAtual,
       "A impressora voltou para ociosa após concluir ou encerrar o trabalho.",
     );
-    if (concluido) {
+    if (resultado.atualizado) {
       console.log(
         `[ORQUESTRADOR] Pedido ${impressora.idPedidoAtual} concluído; ` +
           `impressora ${impressora.id} aguardando remoção.`,
       );
-      await this.notificarPedidoConcluido(impressora.idPedidoAtual);
+      if (resultado.copiaIntermediaria) {
+        await this.notificarCopiaConcluida(impressora.idPedidoAtual);
+      } else {
+        await this.notificarPedidoConcluido(impressora.idPedidoAtual);
+      }
     }
+  }
+
+  private async notificarCopiaConcluida(pedidoId: number): Promise<void> {
+    const pedido = await this.pedidoRepository.findById(pedidoId);
+    if (!pedido || !pedido.emailUsuario) return;
+    await emailClienteCopiaConcluida({
+      nome: pedido.nome,
+      nomeUsuario: pedido.nomeUsuario,
+      emailUsuario: pedido.emailUsuario,
+      copiaAtual: pedido.copiasConcluidas,
+      totalCopias: pedido.quantidade,
+    });
   }
 
   private async notificarPedidoConcluido(pedidoId: number): Promise<void> {
@@ -901,6 +1005,34 @@ export class ImpressoraOrquestradorService {
       preco: pedido.preco,
       tempoEstimadoS: pedido.tempoEstimadoS,
       materialGramas: pedido.materialGramas,
+    });
+    if (pedido.emailUsuario) {
+      await emailClientePecaPronta({
+        nome: pedido.nome,
+        nomeUsuario: pedido.nomeUsuario,
+        emailUsuario: pedido.emailUsuario,
+      });
+    }
+  }
+
+  private async notificarImpressaoIniciada(pedidoId: number): Promise<void> {
+    const pedido = await this.pedidoRepository.findById(pedidoId);
+    if (!pedido || !pedido.emailUsuario) return;
+    await emailClienteImpressaoIniciada({
+      nome: pedido.nome,
+      nomeUsuario: pedido.nomeUsuario,
+      emailUsuario: pedido.emailUsuario,
+    });
+  }
+
+  private async notificarPedidoFalhou(pedidoId: number, motivo: string): Promise<void> {
+    const pedido = await this.pedidoRepository.findById(pedidoId);
+    if (!pedido || !pedido.emailUsuario) return;
+    await emailClientePedidoFalhou({
+      nome: pedido.nome,
+      nomeUsuario: pedido.nomeUsuario,
+      emailUsuario: pedido.emailUsuario,
+      motivo,
     });
   }
 }

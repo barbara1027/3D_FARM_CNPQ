@@ -1,9 +1,16 @@
 # Dependências
 /node_modules
+**/node_modules
 
 # Ficheiros de Build e Produção
 /dist
 /build
+**/dist
+**/tsconfig.*.tsbuildinfo
+
+# Dados de usuários e gerados pelo backend (não versionar)
+backend/uploads/
+backend/gcode_storage/
 
 # Logs
 logs
@@ -36,3 +43,15 @@ Thumbs.db
 # Ficheiros de Teste e Cobertura (se aplicável)
 /coverage
 /reports
+
+# Cache do Vite
+**/.vite
+
+# Configuração local do Claude Code
+/.claude
+
+# Rascunhos e dumps locais
+juntar_codigos.sh
+projeto_completo_3dfarm.txt
+projeto_frontend.txt
+projeto_novo.txt

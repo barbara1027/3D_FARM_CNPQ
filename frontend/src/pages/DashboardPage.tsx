@@ -26,14 +26,6 @@ interface ProgressoData {
   statusFisico: string;
 }
 
-function formatRestante(s: number): string {
-  if (s < 60) return `~${s}s`;
-  const m = Math.ceil(s / 60);
-  if (m < 60) return `~${m}min`;
-  const h = Math.floor(m / 60);
-  return `~${h}h ${m % 60}min`;
-}
-
 function formatEta(date: Date): string {
   const now = new Date();
   const sameDay = date.toDateString() === now.toDateString();
@@ -96,8 +88,7 @@ function PedidoCard({
   onPedirNovamente: (x: Pedido) => void;
   nivelUsuario: 'iniciante' | 'avancado' | null;
 }) {
-  const pct      = progresso?.progressoPct;
-  const restante = progresso?.tempoRestanteS;
+  const pct       = progresso?.progressoPct;
   const nivelando = pct === 0 && progresso?.statusFisico === 'printing';
   const deadline = getDeadline(p, naFilaList, printerByPedido, progressoMap);
 
@@ -147,33 +138,23 @@ function PedidoCard({
           {p.quantidade > 1 ? ` · ${p.quantidade}x` : ''}
         </Typography>
 
-        {/* Progresso — barra determinística, sem indeterminate */}
+        {/* Progresso por unidade — pedidos com quantidade > 1 imprimem uma
+            cópia de cada vez; mostra quantas já saíram até o pedido fechar. */}
+        {p.quantidade > 1 && p.status !== 'concluido' && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+            📦 {p.copiasConcluidas} de {p.quantidade} unidades prontas
+          </Typography>
+        )}
+
+        {/* Em impressão — só o status, sem porcentagem. A previsão de quando
+            fica pronta vem da fila (bloco "Prazo estimado" abaixo), não da
+            telemetria bruta da impressora. */}
         {p.status === 'em_impressao' && (
           <Box sx={{ mt: 1.5 }}>
-            {nivelando ? (
-              <>
-                <Box display="flex" justifyContent="space-between" mb={0.5}>
-                  <Typography variant="caption" color="primary.main" fontWeight={600}>Nivelando mesa...</Typography>
-                  <Typography variant="caption" color="text.secondary">preparando</Typography>
-                </Box>
-                <LinearProgress variant="indeterminate" sx={{ height: 6, borderRadius: 3 }} />
-              </>
-            ) : pct != null && pct > 0 ? (
-              <>
-                <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
-                  <Typography variant="caption" color="primary.main" fontWeight={600}>Imprimindo</Typography>
-                  <Box display="flex" gap={1} alignItems="center">
-                    {restante != null && restante > 0 && (
-                      <Typography variant="caption" color="text.secondary">{formatRestante(restante)}</Typography>
-                    )}
-                    <Typography variant="caption" fontWeight={700} color="primary.main">{pct.toFixed(0)}%</Typography>
-                  </Box>
-                </Box>
-                <LinearProgress variant="determinate" value={pct} sx={{ height: 6, borderRadius: 3 }} />
-              </>
-            ) : (
-              <Typography variant="caption" color="text.secondary">Imprimindo — aguardando dados da impressora</Typography>
-            )}
+            <Typography variant="caption" color="primary.main" fontWeight={600} sx={{ mb: 0.5, display: 'block' }}>
+              {nivelando ? 'Nivelando mesa...' : 'Em impressão'}
+            </Typography>
+            <LinearProgress variant="indeterminate" sx={{ height: 6, borderRadius: 3 }} />
           </Box>
         )}
 
@@ -192,9 +173,16 @@ function PedidoCard({
           </Typography>
         )}
 
+        {/* Pronta para retirada — vale pra todo mundo, não só iniciante */}
+        {p.status === 'concluido' && (
+          <Typography variant="body2" fontWeight={600} color="success.main" sx={{ mt: 0.75 }}>
+            {STATUS_CONTEXTO_INICIANTE.concluido}
+          </Typography>
+        )}
+
         {/* Contexto amigável para iniciante em outros status */}
-        {nivelUsuario === 'iniciante' && (p.status === 'concluido' || p.status === 'falhou' || p.status === 'cancelado') && (
-          <Typography variant="body2" color={p.status === 'concluido' ? 'success.main' : 'text.secondary'} sx={{ mt: 0.75 }}>
+        {nivelUsuario === 'iniciante' && (p.status === 'falhou' || p.status === 'cancelado') && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
             {STATUS_CONTEXTO_INICIANTE[p.status]}
           </Typography>
         )}
@@ -446,29 +434,7 @@ export function DashboardPage() {
                   }
                 />
               </ListItem>
-              {sel.status === 'em_impressao' && getProgresso(sel.id)?.progressoPct != null && getProgresso(sel.id)!.progressoPct! > 0 && (
-                <ListItem>
-                  <ListItemText
-                    primary="Progresso de impressão"
-                    secondary={
-                      <Box sx={{ mt: 0.5 }}>
-                        <Box display="flex" justifyContent="space-between" mb={0.3}>
-                          <span>{getProgresso(sel.id)!.progressoPct!.toFixed(0)}%</span>
-                          {getProgresso(sel.id)?.tempoRestanteS != null && (
-                            <span>{formatRestante(getProgresso(sel.id)!.tempoRestanteS!)} restante</span>
-                          )}
-                        </Box>
-                        <LinearProgress
-                          variant="determinate"
-                          value={getProgresso(sel.id)!.progressoPct!}
-                          sx={{ height: 8, borderRadius: 4 }}
-                        />
-                      </Box>
-                    }
-                  />
-                </ListItem>
-              )}
-              {/* Prazo no dialog */}
+              {/* Prazo no dialog — previsão da fila, não porcentagem bruta da impressora */}
               {(() => {
                 const dl = getDeadline(sel, naFila, printerByPedido, progressoMap);
                 return dl ? (
@@ -506,12 +472,22 @@ export function DashboardPage() {
                   <ListItemText primary="Valor pago" secondary={`R$ ${sel.preco.toFixed(2)}`} />
                 </ListItem>
               )}
-              {/* Justificativa para falha/cancelamento */}
-              {(sel.status === 'falhou' || sel.status === 'cancelado') && sel.descricao && (
+              {/* Justificativa para falha */}
+              {sel.status === 'falhou' && (
+                <ListItem sx={{ bgcolor: 'error.50', borderRadius: 1 }}>
+                  <ListItemText
+                    primary="Motivo da falha"
+                    secondary={sel.motivoFalha ?? 'Não foi possível processar sua peça. Nossa equipe já foi notificada.'}
+                    primaryTypographyProps={{ color: 'error.dark', fontWeight: 600 }}
+                  />
+                </ListItem>
+              )}
+              {/* Justificativa para cancelamento */}
+              {sel.status === 'cancelado' && (
                 <ListItem sx={{ bgcolor: 'warning.50', borderRadius: 1 }}>
                   <ListItemText
-                    primary={sel.status === 'falhou' ? 'Motivo da falha' : 'Motivo do cancelamento'}
-                    secondary={sel.descricao}
+                    primary="Motivo do cancelamento"
+                    secondary={sel.motivoCancelamento ?? 'Motivo não informado.'}
                     primaryTypographyProps={{ color: 'warning.dark', fontWeight: 600 }}
                   />
                 </ListItem>

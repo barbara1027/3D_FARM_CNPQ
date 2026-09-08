@@ -84,7 +84,8 @@ export function normalizeSqlExpression(value: string): string {
   return value
     .toLowerCase()
     .replace(/`/g, "")
-    .replace(/_utf8mb4(?=')/g, "")
+    .replace(/_utf8mb4(?=\\?')/g, "")
+    .replace(/\\(?=')/g, "")
     .replace(/\s+/g, "")
     .replace(/[()]/g, "");
 }

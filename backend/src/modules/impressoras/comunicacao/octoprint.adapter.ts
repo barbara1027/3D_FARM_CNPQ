@@ -119,4 +119,14 @@ export class OctoprintAdapter implements IPrinterCommunicationAdapter {
       { headers, timeout: conexao.timeoutMs },
     );
   }
+
+  async cancelarImpressao(impressora: Impressora): Promise<void> {
+    const conexao = resolverConexaoDaImpressora(impressora);
+    const headers = impressora.api_key ? { "X-Api-Key": impressora.api_key } : {};
+    await axios.post(
+      `${conexao.baseUrl}/api/job`,
+      { command: "cancel" },
+      { headers, timeout: conexao.timeoutMs },
+    );
+  }
 }

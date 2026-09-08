@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, AppBar, Toolbar, Typography, Button, Container,
   IconButton, Badge, Menu, MenuItem, Divider,
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Avatar, CircularProgress, Alert,
   ToggleButton, ToggleButtonGroup, Tooltip,
+  Snackbar,
 } from '@mui/material';
 import SchoolIcon from '@mui/icons-material/School';
 import EngineeringIcon from '@mui/icons-material/Engineering';
@@ -14,6 +15,18 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ChatInboxDrawer } from './ChatInboxDrawer';
 import api from '../services/api';
+import type { Pedido, StatusPedido } from '../types/Pedido';
+import { normalizePedido } from '../utils/normalize';
+import { getStatusTranslation } from '../utils/translations';
+
+// Status que ainda não foram pagos — aparecem na aba "Orçamentos".
+const QUOTE_STATUSES: StatusPedido[] = ['aguardando_pagamento', 'aguardando_revisao', 'falhou'];
+// Status pagos — aparecem na aba "Meus Pedidos".
+const PAID_STATUSES: StatusPedido[] = ['na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado'];
+
+function destinoDoStatus(status: StatusPedido): string {
+  return PAID_STATUSES.includes(status) ? '/dashboard' : '/quotes';
+}
 
 interface Usuario {
   id: number;
@@ -49,6 +62,72 @@ export function ClientLayout() {
     const id = setInterval(fetchUnread, 15_000);
     return () => clearInterval(id);
   }, [fetchUnread]);
+
+  // Aviso de mudança de status de pedido — badge no menu "Orçamentos" (sempre visível)
+  // + toast ao vivo quando o status muda enquanto o cliente navega no site.
+  const [quoteCount, setQuoteCount]     = useState(0);
+  const [toastQueue, setToastQueue]     = useState<{ id: number; pedidoId: number; mensagem: string; status: StatusPedido }[]>([]);
+  const [toastAtual, setToastAtual]     = useState<{ id: number; pedidoId: number; mensagem: string; status: StatusPedido } | null>(null);
+  const prevStatusRef = useRef<Map<number, StatusPedido> | null>(null);
+  const prevCopiasRef = useRef<Map<number, number>>(new Map());
+  const toastIdRef     = useRef(0);
+
+  const fetchPedidosStatus = useCallback(() => {
+    api.get<any[]>('/pedidos')
+      .then(r => {
+        const pedidos = r.data.map(normalizePedido) as Pedido[];
+        setQuoteCount(pedidos.filter(p => QUOTE_STATUSES.includes(p.status)).length);
+
+        const prev = prevStatusRef.current;
+        if (prev) {
+          const novosToasts: typeof toastQueue = [];
+          pedidos.forEach(p => {
+            const anterior = prev.get(p.id);
+            if (anterior && anterior !== p.status) {
+              // Pedido com quantidade > 1: uma cópia terminou e o pedido
+              // voltou pra fila pra imprimir a próxima — avisa quantas já
+              // saíram em vez da mensagem genérica de status.
+              const copiasAnteriores = prevCopiasRef.current.get(p.id) ?? p.copiasConcluidas;
+              const houveNovaCopia =
+                p.quantidade > 1 && p.copiasConcluidas > copiasAnteriores && p.status !== 'concluido';
+              novosToasts.push({
+                id: toastIdRef.current++,
+                pedidoId: p.id,
+                status: p.status,
+                mensagem: houveNovaCopia
+                  ? `"${p.nome}": ${p.copiasConcluidas} de ${p.quantidade} prontas`
+                  : `"${p.nome}": ${getStatusTranslation(p.status)}`,
+              });
+            }
+          });
+          if (novosToasts.length > 0) {
+            setToastQueue(q => [...q, ...novosToasts]);
+          }
+        }
+        prevStatusRef.current = new Map(pedidos.map(p => [p.id, p.status]));
+        prevCopiasRef.current = new Map(pedidos.map(p => [p.id, p.copiasConcluidas]));
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchPedidosStatus();
+    const id = setInterval(fetchPedidosStatus, 15_000);
+    return () => clearInterval(id);
+  }, [fetchPedidosStatus]);
+
+  // Consome a fila de toasts um de cada vez
+  useEffect(() => {
+    if (!toastAtual && toastQueue.length > 0) {
+      setToastAtual(toastQueue[0]);
+      setToastQueue(q => q.slice(1));
+    }
+  }, [toastAtual, toastQueue]);
+
+  const handleVerToast = () => {
+    if (toastAtual) navigate(destinoDoStatus(toastAtual.status));
+    setToastAtual(null);
+  };
 
   const openAccount = (e: React.MouseEvent<HTMLElement>) => {
     setAccountAnchor(e.currentTarget);
@@ -104,7 +183,11 @@ export function ClientLayout() {
           </Typography>
 
           <Button color="inherit" onClick={() => navigate('/dashboard')}>Meus Pedidos</Button>
-          <Button color="inherit" onClick={() => navigate('/quotes')}>Orçamentos</Button>
+          <Button color="inherit" onClick={() => navigate('/quotes')}>
+            <Badge badgeContent={quoteCount > 0 ? quoteCount : undefined} color="error" max={99}>
+              <Box component="span" sx={{ pr: quoteCount > 0 ? 0.5 : 0 }}>Orçamentos</Box>
+            </Badge>
+          </Button>
           <Button color="inherit" onClick={() => navigate('/new-order')}>Novo Pedido</Button>
 
           {/* Ícone de mensagens */}
@@ -217,6 +300,28 @@ export function ClientLayout() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Toast ao vivo — status de pedido mudou enquanto o cliente navega no site */}
+      <Snackbar
+        open={toastAtual !== null}
+        autoHideDuration={8000}
+        onClose={() => setToastAtual(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity="info"
+          variant="filled"
+          onClose={() => setToastAtual(null)}
+          action={
+            <Button color="inherit" size="small" onClick={handleVerToast}>
+              Ver
+            </Button>
+          }
+          sx={{ cursor: 'pointer' }}
+        >
+          {toastAtual?.mensagem}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

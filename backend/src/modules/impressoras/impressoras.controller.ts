@@ -450,6 +450,42 @@ export class ImpressoraController {
     }
   };
 
+  /**
+   * @swagger
+   * /impressoras/{id}/parar:
+   *   post:
+   *     tags: [Impressoras]
+   *     summary: Interrompe a impressão em andamento (falha detectada pelo admin) e devolve o pedido para a fila (admin)
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: integer
+   *     responses:
+   *       200:
+   *         description: Impressão interrompida, pedido devolvido para a fila
+   *       404:
+   *         description: Impressora não encontrada
+   *       409:
+   *         description: O estado da execução mudou antes da interrupção
+   */
+  pararImpressao = async (req: Request, res: Response) => {
+    try {
+      const id = parseId(req.params.id);
+      if (id === undefined) return res.status(400).json({ message: "ID inválido." });
+      return res.status(200).json(await this.impressoraService.pararImpressao(id));
+    } catch (error: unknown) {
+      if (error instanceof ImpressoraServiceError) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      const msg = mensagemErro(error);
+      return res.status(msg === "Impressora não encontrada." ? 404 : 400).json({ message: msg });
+    }
+  };
+
   confirmarRemocao = async (req: Request, res: Response) => {
     try {
       const id = parseId(req.params.id);

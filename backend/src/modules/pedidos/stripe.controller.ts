@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { db } from "../../database/connection";
 import { ImpressoraService } from "../impressoras/impressoras.service";
 import { ImpressoraRepository } from "../impressoras/impressoras.repository";
+import { emailClientePedidoNaFila } from "../../services/email.service";
 
 const impressoraService = new ImpressoraService(new ImpressoraRepository());
 
@@ -41,6 +42,20 @@ export const stripeWebhook = async (req: Request, res: Response) => {
           [pedidoId]
         );
         console.log(`[STRIPE] Pedido ${pedidoId} movido para na_fila.`);
+
+        const [rows]: any = await db.execute(
+          `SELECT p.nome, u.nome AS nomeUsuario, u.email AS emailUsuario
+           FROM pedidos p JOIN usuarios u ON u.id = p.id_usuario
+           WHERE p.id = ? LIMIT 1`, [pedidoId]
+        );
+        if (rows?.[0]?.emailUsuario) {
+          await emailClientePedidoNaFila({
+            nome: rows[0].nome,
+            nomeUsuario: rows[0].nomeUsuario,
+            emailUsuario: rows[0].emailUsuario,
+          });
+        }
+
         // Gatilho da fila: tenta encaixar o pedido numa impressora ociosa agora mesmo.
         impressoraService.tentarAtribuirAutomaticamente().catch((err) =>
           console.error("[STRIPE] Falha na atribuição automática pós-pagamento:", err.message),

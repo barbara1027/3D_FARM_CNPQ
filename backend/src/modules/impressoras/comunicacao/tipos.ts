@@ -144,4 +144,10 @@ export interface IPrinterCommunicationAdapter {
    * quente e parado, escorrendo/entupindo até o próximo job.
    */
   desligarAquecedores(impressora: Impressora): Promise<void>;
+  /**
+   * Cancela o job em andamento na impressora física. Chamado quando o admin
+   * detecta uma falha de impressão e aciona a parada manual — best-effort:
+   * o orquestrador segue com a devolução do pedido pra fila mesmo se isso falhar.
+   */
+  cancelarImpressao(impressora: Impressora): Promise<void>;
 }

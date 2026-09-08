@@ -235,4 +235,13 @@ export class MoonrakerAdapter implements IPrinterCommunicationAdapter {
     }
     await this.rodarGcode(impressora, "M104 S0\nM140 S0");
   }
+
+  async cancelarImpressao(impressora: Impressora): Promise<void> {
+    const conexao = resolverConexaoDaImpressora(impressora);
+    await axios.post(
+      `${conexao.baseUrl}/printer/print/cancel`,
+      {},
+      { headers: this.headers(impressora), timeout: conexao.timeoutMs },
+    );
+  }
 }

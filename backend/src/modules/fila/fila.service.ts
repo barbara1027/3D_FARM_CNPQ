@@ -7,6 +7,7 @@ import {
   PedidoOtimizacao,
 } from "./filaOtimizacao.service";
 import { PedidoImpressoraRepository } from "./pedidoImpressora.repository";
+import { emailAguardandoFilamento } from "../../services/email.service";
 
 const HORAS_OPERADOR_DIA_PADRAO = 4;
 
@@ -73,12 +74,35 @@ export class FilaService {
         : [];
 
     try {
-      await this.pedidoImpressoraRepo.substituirPlanejamento(novasAlocacoes);
+      const novasEsperas = await this.pedidoImpressoraRepo.substituirPlanejamento(novasAlocacoes);
       console.log(`[FilaService] Concluido. ${novasAlocacoes.length} pedidos realocados.`);
+      this.notificarNovasEsperasFilamento(novasEsperas).catch((err) =>
+        console.error("[FilaService] Falha ao notificar espera de filamento:", err.message),
+      );
       return novasAlocacoes;
     } catch (e) {
       console.error("[FilaService] Erro:", e);
       throw e;
+    }
+  }
+
+  private async notificarNovasEsperasFilamento(
+    esperas: { idPedido: number; idImpressora: number; idMaterial: number | null }[],
+  ): Promise<void> {
+    for (const espera of esperas) {
+      const [pedido, impressora] = await Promise.all([
+        this.pedidoRepo.findById(espera.idPedido),
+        this.impressoraRepo.findById(espera.idImpressora),
+      ]);
+      if (!pedido || !impressora) continue;
+      await emailAguardandoFilamento({
+        id: pedido.id,
+        nome: pedido.nome,
+        nomeUsuario: pedido.nomeUsuario,
+        emailUsuario: pedido.emailUsuario,
+        impressora: impressora.nome,
+        motivo: `Pedido aguardando o filamento planejado (material ${espera.idMaterial ?? "desconhecido"}) na impressora ${impressora.nome}.`,
+      });
     }
   }
 }

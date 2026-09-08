@@ -22,11 +22,14 @@ export interface Pedido {
   idArquivo: number;
   parametros: Record<string, any> | null;
   quantidade: number;
+  copiasConcluidas: number;
   gcodePath: string | null;
   tempoEstimadoS: number | null;
   materialGramas: number | null;
   scoreComplexidade: number | null;
   motivoComplexidade: string | null;
+  motivoFalha: string | null;
+  motivoCancelamento: string | null;
   precoBase: number | null;
   taxaComplexidade: number | null;
   taxaStripe: number | null;
@@ -94,6 +97,7 @@ export interface UpdatePedidoRepositoryDTO {
   preco?: number;
   descricao?: string | null;
   status?: StatusPedido;
+  motivoCancelamento?: string | null;
   idMaterial?: number;
   idQualidade?: number;
   idArquivo?: number;
@@ -157,11 +161,14 @@ const SEL = `
     p.id_arquivo        AS idArquivo,
     p.parametros,
     p.quantidade,
+    p.copias_concluidas AS copiasConcluidas,
     p.gcode_path        AS gcodePath,
     p.tempo_estimado_s  AS tempoEstimadoS,
     p.material_gramas   AS materialGramas,
     p.score_complexidade  AS scoreComplexidade,
     p.motivo_complexidade AS motivoComplexidade,
+    p.motivo_falha        AS motivoFalha,
+    p.motivo_cancelamento AS motivoCancelamento,
     p.preco_base        AS precoBase,
     p.taxa_complexidade AS taxaComplexidade,
     p.taxa_stripe       AS taxaStripe,
@@ -290,6 +297,7 @@ export class PedidoRepository {
 
     if (data.preco       !== undefined) { campos.push("preco = ?");        vals.push(data.preco); }
     if (data.descricao   !== undefined) { campos.push("descricao = ?");    vals.push(data.descricao); }
+    if (data.motivoCancelamento !== undefined) { campos.push("motivo_cancelamento = ?"); vals.push(data.motivoCancelamento); }
     if (data.idMaterial  !== undefined) { campos.push("id_material = ?");  vals.push(data.idMaterial); }
     if (data.idQualidade !== undefined) { campos.push("id_qualidade = ?"); vals.push(data.idQualidade); }
     if (data.idArquivo   !== undefined) { campos.push("id_arquivo = ?");   vals.push(data.idArquivo); }
@@ -411,6 +419,14 @@ export class PedidoRepository {
         transactionStarted = false;
         return "execution_active";
       }
+
+      // id_pedido em pedido_impressora usa ON DELETE RESTRICT (não CASCADE — é
+      // coluna-base da gerada id_pedido_ativo), então o histórico de planejamento
+      // precisa ser removido explicitamente antes do pedido.
+      await connection.execute(
+        "DELETE FROM pedido_impressora WHERE id_pedido = ?",
+        [id],
+      );
 
       const [result]: any = await connection.execute(
         "DELETE FROM pedidos WHERE id = ?",

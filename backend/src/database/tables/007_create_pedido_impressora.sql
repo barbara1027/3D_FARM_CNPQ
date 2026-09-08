@@ -1,3 +1,7 @@
+-- id_pedido usa ON DELETE RESTRICT (não CASCADE): é coluna-base da gerada
+-- id_pedido_ativo, e o InnoDB não permite CASCADE/SET NULL em FK que
+-- referencia coluna-base de coluna gerada. pedidos.repository.ts:delete()
+-- apaga as linhas desta tabela explicitamente antes do DELETE do pedido.
 CREATE TABLE `pedido_impressora` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `id_pedido` INT UNSIGNED NOT NULL,
@@ -25,7 +29,7 @@ CREATE TABLE `pedido_impressora` (
   KEY `idx_pedido_impressora_impressora_status_posicao` (`id_impressora`, `status`, `posicao_fila`),
   KEY `idx_pedido_impressora_pedido_status` (`id_pedido`, `status`),
   KEY `idx_pedido_impressora_status_tentativa` (`status`, `proxima_tentativa_em`),
-  CONSTRAINT `fk_pedido_impressora_pedido` FOREIGN KEY (`id_pedido`) REFERENCES `pedidos` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pedido_impressora_pedido` FOREIGN KEY (`id_pedido`) REFERENCES `pedidos` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_pedido_impressora_impressora` FOREIGN KEY (`id_impressora`) REFERENCES `impressoras` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
   CONSTRAINT `chk_pedido_impressora_posicao_positive` CHECK (`posicao_fila` > 0),
   CONSTRAINT `chk_pedido_impressora_slot_planejado_range` CHECK (`numero_slot_planejado` IS NULL OR `numero_slot_planejado` BETWEEN 1 AND 4),
