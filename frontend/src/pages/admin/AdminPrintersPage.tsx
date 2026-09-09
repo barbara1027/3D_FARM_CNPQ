@@ -16,6 +16,7 @@ import SyncIcon from '@mui/icons-material/Sync';
 import SettingsIcon from '@mui/icons-material/Settings';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
 import LayersIcon from '@mui/icons-material/Layers';
 import api from '../../services/api';
@@ -74,6 +75,7 @@ export function AdminPrintersPage() {
   const [error, setError]               = useState<string | null>(null);
   const [manageOpen, setManageOpen]     = useState(false);
   const [progressoMap, setProgressoMap] = useState<Record<number, ProgressoData>>({});
+  const [pedidosPorId, setPedidosPorId] = useState<Record<number, Pedido>>({});
 
   // Menu de troca de material
   const [materialMenuAnchor, setMaterialMenuAnchor] = useState<HTMLElement | null>(null);
@@ -93,8 +95,19 @@ export function AdminPrintersPage() {
 
   const fetchImpressoras = () => {
     setLoading(true);
-    api.get<Impressora[]>('/impressoras')
-      .then(r => setImpressoras(r.data))
+    Promise.all([
+      api.get<Impressora[]>('/impressoras'),
+      api.get<any[]>('/pedidos'),
+    ])
+      .then(([impRes, pedRes]) => {
+        setImpressoras(impRes.data);
+        const mapa: Record<number, Pedido> = {};
+        pedRes.data.forEach(raw => {
+          const p = normalizePedido(raw);
+          if (p) mapa[p.id] = p;
+        });
+        setPedidosPorId(mapa);
+      })
       .catch(() => setError('Erro ao buscar impressoras.'))
       .finally(() => setLoading(false));
   };
@@ -122,7 +135,21 @@ export function AdminPrintersPage() {
   const nomeMaterial = (idMaterial: number | null): string =>
     idMaterial == null ? 'Sem material' : materiais.find(m => m.id === idMaterial)?.nome ?? `#${idMaterial}`;
 
+  // Slot 1 é o único que impressoras sem CFS podem usar — é o slot exibido
+  // no chip do card. Impressoras com CFS podem carregar mais até 4 slots,
+  // mas a troca rápida pelo card segue restrita ao slot 1.
   const idMaterialSlot1 = (imp: Impressora | null): number | null => slot1Material(imp)?.material.id ?? null;
+
+  // Nome do pedido em vez do número puro, com a quantidade em destaque
+  // (evita o admin confundir "1 pedido" com "1 peça" quando quantidade > 1).
+  const rotuloPedido = (idPedido: number): string => {
+    const pedido = pedidosPorId[idPedido];
+    if (!pedido) return `Pedido #${idPedido}`;
+    if (pedido.quantidade <= 1) return pedido.nome;
+    // Imprime uma cópia de cada vez (jobs_impressao) — mostra qual unidade
+    // está saindo agora.
+    return `${pedido.nome} (${pedido.unidadesConcluidas + 1}/${pedido.quantidade})`;
+  };
 
   const abrirMenuMaterial = (e: React.MouseEvent<HTMLElement>, imp: Impressora) => {
     e.stopPropagation();
@@ -217,6 +244,13 @@ export function AdminPrintersPage() {
     } catch (err: any) { setError(err.response?.data?.message ?? 'Erro ao liberar.'); }
   };
 
+  const handleParar = async (id: number) => {
+    if (!window.confirm('Parar esta impressão? O pedido volta para a fila e será atribuído automaticamente a outra impressora disponível.')) return;
+    try {
+      await api.post(`/impressoras/${id}/parar`); fetchImpressoras();
+    } catch (err: any) { setError(err.response?.data?.message ?? 'Erro ao parar impressão.'); }
+  };
+
   const handleConfirmarRemocao = async (id: number) => {
     try {
       await api.post(`/impressoras/${id}/confirmar-remocao`); fetchImpressoras();
@@ -303,7 +337,7 @@ export function AdminPrintersPage() {
                 </Typography>
                 <Typography variant="body2" color="text.secondary">{imp.modelo}</Typography>
               </Box>
-              <Tooltip title="Clique para trocar o material carregado">
+              <Tooltip title="Clique para trocar o material carregado no slot 1">
                 <Chip
                   icon={<LayersIcon fontSize="small" />}
                   label={nomeMaterial(idMaterialSlot1(imp))}
@@ -333,7 +367,7 @@ export function AdminPrintersPage() {
                 <Box>
                   <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
                     <Typography variant="caption" color="text.secondary">
-                      {nivelando ? 'Nivelando mesa...' : imp.idPedidoAtual ? `Pedido #${imp.idPedidoAtual}` : 'Imprimindo'}
+                      {nivelando ? 'Nivelando mesa...' : imp.idPedidoAtual ? rotuloPedido(imp.idPedidoAtual) : 'Imprimindo'}
                     </Typography>
                     <Box display="flex" gap={1} alignItems="center">
                       {restante != null && restante > 0 && (
@@ -383,7 +417,7 @@ export function AdminPrintersPage() {
             {/* Pedido atual (quando não está imprimindo) */}
             {imp.status !== 'Imprimindo' && imp.idPedidoAtual && (
               <Typography variant="caption" color="text.secondary">
-                Pedido #{imp.idPedidoAtual}
+                {rotuloPedido(imp.idPedidoAtual)}
               </Typography>
             )}
 
@@ -417,6 +451,15 @@ export function AdminPrintersPage() {
                   >
                     Concluir
                   </Button>
+                  <Tooltip title="Parar impressão (falha detectada) e devolver pedido para a fila">
+                    <Button
+                      variant="outlined" color="error" fullWidth size="small"
+                      startIcon={<ErrorOutlineIcon />}
+                      onClick={() => handleParar(imp.id)}
+                    >
+                      Parar
+                    </Button>
+                  </Tooltip>
                 </>
               )}
               {imp.status === 'Aguardando Remoção' && (

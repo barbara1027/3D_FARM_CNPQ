@@ -15,6 +15,7 @@ import { PedidoRepository } from "../pedidos/pedidos.repository";
 import { PrinterAdapterFactory } from "./comunicacao/printer-adapter.factory";
 import { ImpressoraOrquestradorService } from "./comunicacao/orquestrador.service";
 import { PrinterHealthCheckResult, PrinterRuntimeStatus } from "./comunicacao/tipos";
+import { PedidoImpressoraStateError } from "../fila/pedidoImpressora.repository";
 
 export interface ProgressoImpressora {
   progressoPct: number | null;
@@ -407,6 +408,23 @@ export class ImpressoraService {
 
   async liberar(idImpressora: number): Promise<Impressora> {
     return this.orquestrador.liberarImpressora(idImpressora);
+  }
+
+  async pararImpressao(idImpressora: number): Promise<Impressora> {
+    let impressora: Impressora;
+    try {
+      impressora = await this.orquestrador.pararImpressao(idImpressora);
+    } catch (error) {
+      if (error instanceof PedidoImpressoraStateError) {
+        throw new ImpressoraServiceError(error.message, 409);
+      }
+      throw error;
+    }
+    // Pedido acabou de voltar pra fila — tenta encaixar em outra impressora ociosa imediatamente.
+    this.orquestrador.tentarAtribuirAutomaticamente().catch((err) =>
+      console.error("[ImpressoraService] Falha na atribuição automática pós-parada:", err.message),
+    );
+    return impressora;
   }
 
   async confirmarRemocao(idImpressora: number): Promise<Impressora> {

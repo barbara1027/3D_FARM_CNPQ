@@ -27,6 +27,7 @@ impressorasRoutes.post("/:id/testar-conexao", authMiddleware, adminMiddleware, i
 impressorasRoutes.post("/:id/sincronizar", authMiddleware, adminMiddleware, impressoraController.sincronizarStatus);
 impressorasRoutes.post("/:id/atribuir-pedido", authMiddleware, adminMiddleware, impressoraController.atribuirPedido);
 impressorasRoutes.post("/:id/liberar", authMiddleware, adminMiddleware, impressoraController.liberar);
+impressorasRoutes.post("/:id/parar", authMiddleware, adminMiddleware, impressoraController.pararImpressao);
 impressorasRoutes.post("/:id/confirmar-remocao", authMiddleware, adminMiddleware, impressoraController.confirmarRemocao);
 impressorasRoutes.patch("/:id", authMiddleware, adminMiddleware, impressoraController.atualizar);
 impressorasRoutes.put("/:id/slots/:numeroSlot", authMiddleware, adminMiddleware, impressoraController.carregarFilamento);

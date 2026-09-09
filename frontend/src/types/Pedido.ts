@@ -15,6 +15,7 @@ export interface Pedido {
   preco: number;
   descricao: string | null;
   status: StatusPedido;
+  unidadesConcluidas: number;
   idUsuario: number;
   idMaterial: number;
   idQualidade: number;
@@ -24,6 +25,8 @@ export interface Pedido {
   materialGramas: number | null;
   scoreComplexidade: number | null;
   motivoComplexidade: string | null;
+  motivoFalha: string | null;
+  motivoCancelamento: string | null;
   precoBase: number | null;
   taxaComplexidade: number | null;
   taxaStripe: number | null;

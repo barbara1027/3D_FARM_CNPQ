@@ -6,6 +6,7 @@ import { ImpressoraRepository } from "../impressoras/impressoras.repository";
 import { toNullableNumber } from "./pedidos.repository";
 import { pedidoEstaProntoParaFila } from "./baseTemporal.service";
 import { JobImpressaoRepository } from "../fila/jobsImpressao.repository";
+import { emailClientePedidoNaFila } from "../../services/email.service";
 
 const impressoraService = new ImpressoraService(new ImpressoraRepository());
 const jobImpressaoRepository = new JobImpressaoRepository();
@@ -81,20 +82,25 @@ export const stripeWebhook = async (req: Request, res: Response) => {
       try {
         const [rows]: any = await db.execute(
           `SELECT
-             status,
-             quantidade,
-             tempo_gcode_horas AS tempoGcodeHoras,
-             tempo_exec_farm_horas AS tempoExecFarmHoras,
-             eta_horas_estimado AS etaHorasEstimado,
-             eta_calculado_em AS etaCalculadoEm,
-             prazo_entrega_horas AS prazoEntregaHoras,
-             prazo_entrega AS prazoEntrega,
-             prazo_entrega_original AS prazoEntregaOriginal,
-             limite_inicio_impressao AS limiteInicioImpressao,
-             tempo_maximo_espera_horas AS tempoMaximoEsperaHoras,
-             buffer_prioridade_horas AS bufferPrioridadeHoras,
-             buffer_seguranca_horas AS bufferSegurancaHoras
-           FROM pedidos WHERE id = ? LIMIT 1`,
+             p.status,
+             p.quantidade,
+             p.nome,
+             p.tempo_gcode_horas AS tempoGcodeHoras,
+             p.tempo_exec_farm_horas AS tempoExecFarmHoras,
+             p.eta_horas_estimado AS etaHorasEstimado,
+             p.eta_calculado_em AS etaCalculadoEm,
+             p.prazo_entrega_horas AS prazoEntregaHoras,
+             p.prazo_entrega AS prazoEntrega,
+             p.prazo_entrega_original AS prazoEntregaOriginal,
+             p.limite_inicio_impressao AS limiteInicioImpressao,
+             p.tempo_maximo_espera_horas AS tempoMaximoEsperaHoras,
+             p.buffer_prioridade_horas AS bufferPrioridadeHoras,
+             p.buffer_seguranca_horas AS bufferSegurancaHoras,
+             u.nome  AS nomeUsuario,
+             u.email AS emailUsuario
+           FROM pedidos p
+           JOIN usuarios u ON u.id = p.id_usuario
+           WHERE p.id = ? LIMIT 1`,
           [pedidoId],
         );
         const pedido = rows?.[0];
@@ -136,6 +142,15 @@ export const stripeWebhook = async (req: Request, res: Response) => {
           );
           if (Number(updateResult.affectedRows) === 1) {
             console.log(`[STRIPE] Pedido ${pedidoId} movido para na_fila.`);
+            if (pedido.emailUsuario) {
+              await emailClientePedidoNaFila({
+                nome: pedido.nome,
+                nomeUsuario: pedido.nomeUsuario,
+                emailUsuario: pedido.emailUsuario,
+              }).catch((err) =>
+                console.error(`[STRIPE] Falha ao enviar e-mail de pedido na fila (${pedidoId}):`, err.message),
+              );
+            }
             // Gera as unidades físicas de execução (Fase 6) e só então tenta
             // encaixar o pedido numa impressora ociosa.
             const quantidade = Number(pedido.quantidade) || 1;

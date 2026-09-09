@@ -1,6 +1,7 @@
 import { Pedido, PedidoRepository, StatusPedido } from "./pedidos.repository";
 import { runAutoSlicePipeline } from "../slicer/auto-slice.service";
 import { PedidoImpressoraRepository } from "../fila/pedidoImpressora.repository";
+import { emailClientePedidoCancelado } from "../../services/email.service";
 
 export interface CreatePedidoServiceDTO {
   nome: string;
@@ -18,6 +19,7 @@ export interface UpdatePedidoServiceDTO {
   preco?: number;
   descricao?: string | null;
   status?: StatusPedido;
+  motivoCancelamento?: string | null;
   idMaterial?: number;
   idQualidade?: number;
   idArquivo?: number;
@@ -90,6 +92,15 @@ export class PedidoService {
       if (resultado === "not_found") throw new Error("Pedido não encontrado.");
       if (resultado === "execution_active") {
         throw new Error("O pedido entrou em execução durante a atualização.");
+      }
+
+      if (pedido.emailUsuario) {
+        await emailClientePedidoCancelado({
+          nome: pedido.nome,
+          nomeUsuario: pedido.nomeUsuario,
+          emailUsuario: pedido.emailUsuario,
+          motivo: data.motivoCancelamento ?? undefined,
+        });
       }
     } else if (data.status !== undefined) {
       throw new Error(

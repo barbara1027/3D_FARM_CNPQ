@@ -47,11 +47,14 @@ function criarPedido(overrides: Partial<Pedido> = {}): Pedido {
     idArquivo: 1,
     parametros: null,
     quantidade: 1,
+    unidadesConcluidas: 0,
     gcodePath: GCODE_FIXTURE,
     tempoEstimadoS: 60,
     materialGramas: 1,
     scoreComplexidade: null,
     motivoComplexidade: null,
+    motivoFalha: null,
+    motivoCancelamento: null,
     precoBase: 10,
     taxaComplexidade: null,
     taxaStripe: null,
@@ -239,8 +242,10 @@ class FakePedidoImpressoraRepository {
     idAlocacao: number,
     mensagem: string,
     opcoes: { maxTentativas?: number; bloquearImpressora?: boolean },
-  ): Promise<void> {
+  ): Promise<{ status: "na_fila" | "falhou"; tentativasInicio: number; proximaTentativaEm: Date | null }> {
     this.falhaCalls.push({ idAlocacao, mensagem, opcoes });
+    const terminal = (opcoes.maxTentativas ?? 3) <= 1;
+    return { status: terminal ? "falhou" : "na_fila", tentativasInicio: 1, proximaTentativaEm: null };
   }
 
   async bloquearReservaComInicioIncerto(
@@ -289,6 +294,7 @@ class FakeControlAdapter implements IPrinterCommunicationAdapter {
   uploadCalls = 0;
   statusCalls = 0;
   desligarCalls = 0;
+  cancelarCalls = 0;
   inicioExternoCalls: Array<{ idImpressora: number; jobRemotoId: string }> = [];
 
   async healthCheck(): Promise<PrinterHealthCheckResult> {
@@ -318,6 +324,10 @@ class FakeControlAdapter implements IPrinterCommunicationAdapter {
 
   async desligarAquecedores(): Promise<void> {
     this.desligarCalls += 1;
+  }
+
+  async cancelarImpressao(): Promise<void> {
+    this.cancelarCalls += 1;
   }
 }
 

@@ -6,7 +6,13 @@ import { runPrusaSlicer, gcodeOutputPath, BedCenter } from "./slicer.service";
 import { parseGcode, densityForMaterial } from "./gcode-parser";
 import { scoreComplexity } from "./complexity-scorer";
 import { calculatePrice, applyStripeFee } from "./price-calculator";
-import { emailRevisaoPendente, emailPedidoFalhou } from "../../services/email.service";
+import {
+  emailRevisaoPendente,
+  emailPedidoFalhou,
+  emailClientePedidoFalhou,
+  emailClientePedidoEmRevisao,
+  emailClienteOrcamentoPronto,
+} from "../../services/email.service";
 import { EtaEntregaService } from "../pedidos/etaEntrega.service";
 import { PedidoRepository, StatusPedido } from "../pedidos/pedidos.repository";
 import { ImpressoraRepository } from "../impressoras/impressoras.repository";
@@ -166,18 +172,17 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
           ? String(Math.round((Number(row.mTempMesaMin) + Number(row.mTempMesaMax)) / 2))
           : "");
 
-    // Merge: parâmetros do usuário > defaults da qualidade/material no banco
-    // Para supports/adhesion: valor explícito do usuário tem prioridade;
-    // se não foi modificado ("none"), usa o preset da qualidade como fallback.
+    // Merge: parâmetros do usuário > defaults da qualidade/material no banco.
+    // Para supports: "none" é uma escolha explícita e válida do cliente (imprimir
+    // sem suporte) — só cai no preset da qualidade quando o campo está mesmo
+    // ausente (ex.: pedido criado sem parametros.supports).
     const sliceParams = {
       ...userParams,
       perimeters:       userParams.perimeters       ?? String(row.qPerimetros    ?? 2),
       topLayers:        userParams.topLayers        ?? String(row.qCamadasTopo   ?? 3),
       bottomLayers:     userParams.bottomLayers     ?? String(row.qCamadasBase   ?? 3),
       supportAngle:     userParams.supportAngle     ?? String(row.qAnguloSuporte ?? 45),
-      supports: userParams.supports && userParams.supports !== "none"
-        ? userParams.supports
-        : (Number(row.qSuport) ? "touching_buildplate" : "none"),
+      supports:         userParams.supports         ?? (Number(row.qSuport) ? "touching_buildplate" : "none"),
       adhesion: userParams.adhesion && userParams.adhesion !== "none"
         ? userParams.adhesion
         : (Number(row.qAdesao) ? "brim" : "none"),
@@ -369,6 +374,20 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
         scoreComplexidade: complexity.score,
         motivoComplexidade: complexity.summary,
       });
+      if (row.emailUsuario) {
+        await emailClientePedidoEmRevisao({
+          nome: row.pedidoNome,
+          nomeUsuario: row.nomeUsuario,
+          emailUsuario: row.emailUsuario,
+        });
+      }
+    } else if (novoStatus === "aguardando_pagamento" && row.emailUsuario) {
+      await emailClienteOrcamentoPronto({
+        nome: row.pedidoNome,
+        nomeUsuario: row.nomeUsuario,
+        emailUsuario: row.emailUsuario,
+        preco: totalPreco,
+      });
     }
 
   } catch (err: any) {
@@ -380,13 +399,14 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       await fs.unlink(gcodePath);
     } catch { /* arquivo pode não existir ainda */ }
 
-    // Marca o pedido como falhou para o cliente ver
+    // Marca o pedido como falhou para o cliente ver, com o motivo persistido
     await db.execute(`
       UPDATE pedidos SET
-        status     = 'falhou',
-        updated_at = NOW()
+        status       = 'falhou',
+        motivo_falha = ?,
+        updated_at   = NOW()
        WHERE id = ? AND status = 'analisando'
-    `, [pedidoId]).catch((e: any) => {
+    `, [err.message, pedidoId]).catch((e: any) => {
       console.error(`[AUTO-SLICE] Falha ao marcar pedido ${pedidoId} como 'falhou':`, e.message);
     });
 
@@ -397,6 +417,15 @@ export async function runAutoSlicePipeline(pedidoId: number): Promise<void> {
       emailUsuario: row?.emailUsuario,
       motivo: err.message,
     });
+
+    if (row?.emailUsuario) {
+      await emailClientePedidoFalhou({
+        nome: row.pedidoNome,
+        nomeUsuario: row.nomeUsuario,
+        emailUsuario: row.emailUsuario,
+        motivo: err.message,
+      });
+    }
 
   } finally {
     runningPipelines.delete(pedidoId);

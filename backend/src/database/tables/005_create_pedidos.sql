@@ -24,6 +24,8 @@ CREATE TABLE `pedidos` (
   `material_gramas` DECIMAL(12,4) NULL,
   `score_complexidade` DECIMAL(5,4) NULL,
   `motivo_complexidade` TEXT NULL,
+  `motivo_falha` TEXT NULL,
+  `motivo_cancelamento` TEXT NULL,
   `preco_base` DECIMAL(10,2) NULL,
   `taxa_complexidade` DECIMAL(10,2) NULL,
   `taxa_stripe` DECIMAL(10,2) NULL,

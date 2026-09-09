@@ -91,6 +91,29 @@ const INFILL_OPTIONS = [
   },
 ];
 
+const SUPPORT_OPTIONS = [
+  {
+    value: 'none',
+    label: 'Sem suporte',
+    detail: 'Nenhum material de suporte é gerado. Mais rápido e sem marcas na peça, mas partes flutuantes ou muito inclinadas podem sair deformadas ou falhar. Só escolha se tiver certeza de que o modelo não precisa.',
+  },
+  {
+    value: 'touching_buildplate',
+    label: 'Suporte apenas na mesa',
+    detail: 'Gera suporte somente para partes que ficam penduradas sobre a própria mesa de impressão — não cria suporte "dentro" de cavidades internas da peça. Bom equilíbrio entre segurança e facilidade de remoção.',
+  },
+  {
+    value: 'everywhere',
+    label: 'Suporte em toda a peça',
+    detail: 'Gera suporte em qualquer lugar necessário, inclusive dentro de cavidades e reentrâncias internas. Mais seguro para modelos complexos, mas pode deixar partes internas difíceis de limpar depois.',
+  },
+  {
+    value: 'tree',
+    label: 'Suporte em árvore',
+    detail: 'Estrutura orgânica, com "galhos" que tocam a peça em poucos pontos. Usa menos material, sai mais rápido e é bem mais fácil de remover à mão, com menos marcas na superfície. Recomendado para peças com geometria complexa.',
+  },
+];
+
 const MATERIAL_TYPES_INFO = [
   {
     tipo: 'PLA',
@@ -250,6 +273,7 @@ function ConfigStep({
   const [infoQuality, setInfoQuality]   = useState<string | null>(null);
   const [infoMaterial, setInfoMaterial] = useState(false);
   const [infoInfill, setInfoInfill]     = useState(false);
+  const [infoSupport, setInfoSupport]   = useState(false);
   const [expandParams, setExpandParams] = useState(false);
   const [qtdStr, setQtdStr]             = useState(String(data.quantidade));
   useEffect(() => { setQtdStr(String(data.quantidade)); }, [data.quantidade]);
@@ -541,6 +565,29 @@ function ConfigStep({
         )}
       </Box>
 
+      {/* Suporte */}
+      <Box>
+        <LabelComInfo label="Suporte" onInfo={() => setInfoSupport(true)} />
+        <FormControl fullWidth size="small">
+          <Select
+            value={data.supports}
+            onChange={(e: SelectChangeEvent) => onChange('supports', e.target.value)}
+          >
+            <MenuItem value="none">Sem suporte</MenuItem>
+            <MenuItem value="touching_buildplate">Suporte apenas na mesa</MenuItem>
+            <MenuItem value="everywhere">Suporte em toda a peça</MenuItem>
+            <MenuItem value="tree">Suporte em árvore (mais fácil de remover)</MenuItem>
+          </Select>
+        </FormControl>
+        {data.supports === 'none' && (
+          <Alert severity="warning" sx={{ mt: 1 }}>
+            Sem suporte, partes da peça com ângulos muito inclinados ou "flutuando" no ar podem sair
+            deformadas ou não imprimir corretamente. Só escolha essa opção se tiver certeza de que o
+            modelo não precisa de suporte.
+          </Alert>
+        )}
+      </Box>
+
       {/* Descrição */}
       <TextField
         label="Observações (opcional)"
@@ -641,6 +688,44 @@ function ConfigStep({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setInfoInfill(false)}>Fechar</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Dialog: Suporte */}
+      <Dialog open={infoSupport} onClose={() => setInfoSupport(false)} maxWidth="sm" fullWidth>
+        <DialogTitle fontWeight={700}>O que é suporte de impressão?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Suporte é material extra impresso embaixo de partes da peça que "flutuam" no ar ou têm
+            ângulos muito inclinados, pra elas não desabarem durante a impressão. Depois de pronta, o
+            suporte é removido manualmente — por isso ele deixa marcas na superfície onde encostou.
+          </Typography>
+          {SUPPORT_OPTIONS.map((opt, i) => (
+            <Box
+              key={opt.value}
+              sx={{
+                py: 1.5,
+                borderTop: i === 0 ? 'none' : '1px solid',
+                borderColor: 'divider',
+                cursor: 'pointer',
+                borderRadius: 1,
+                px: 1,
+                '&:hover': { bgcolor: 'grey.50' },
+              }}
+              onClick={() => { onChange('supports', opt.value); setInfoSupport(false); }}
+            >
+              <Box display="flex" alignItems="center" gap={1} mb={0.25}>
+                <Typography variant="subtitle2" fontWeight={700}>{opt.label}</Typography>
+                {data.supports === opt.value && (
+                  <Chip label="selecionado" size="small" color="primary" sx={{ ml: 'auto' }} />
+                )}
+              </Box>
+              <Typography variant="body2" color="text.secondary">{opt.detail}</Typography>
+            </Box>
+          ))}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInfoSupport(false)}>Fechar</Button>
         </DialogActions>
       </Dialog>
     </Box>

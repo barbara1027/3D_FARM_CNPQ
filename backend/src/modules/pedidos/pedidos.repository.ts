@@ -28,6 +28,8 @@ export interface Pedido {
   materialGramas: number | null;
   scoreComplexidade: number | null;
   motivoComplexidade: string | null;
+  motivoFalha: string | null;
+  motivoCancelamento: string | null;
   precoBase: number | null;
   taxaComplexidade: number | null;
   taxaStripe: number | null;
@@ -50,6 +52,9 @@ export interface Pedido {
   dimensaoXMm: number | null;
   dimensaoYMm: number | null;
   dimensaoZMm: number | null;
+  // progresso de impressão por unidade (jobs_impressao) — 0 quando o pedido
+  // ainda não tem jobs cadastrados (não pago) ou nenhuma unidade terminou
+  unidadesConcluidas: number;
   // campos JOIN
   nomeUsuario?: string;
   emailUsuario?: string;
@@ -119,6 +124,7 @@ export interface UpdatePedidoRepositoryDTO {
   preco?: number;
   descricao?: string | null;
   status?: StatusPedido;
+  motivoCancelamento?: string | null;
   idMaterial?: number;
   idQualidade?: number;
   idArquivo?: number;
@@ -209,6 +215,8 @@ const SEL = `
     p.material_gramas   AS materialGramas,
     p.score_complexidade  AS scoreComplexidade,
     p.motivo_complexidade AS motivoComplexidade,
+    p.motivo_falha        AS motivoFalha,
+    p.motivo_cancelamento AS motivoCancelamento,
     p.preco_base        AS precoBase,
     p.taxa_complexidade AS taxaComplexidade,
     p.taxa_stripe       AS taxaStripe,
@@ -227,6 +235,8 @@ const SEL = `
     p.dimensao_x_mm AS dimensaoXMm,
     p.dimensao_y_mm AS dimensaoYMm,
     p.dimensao_z_mm AS dimensaoZMm,
+    (SELECT COUNT(*) FROM jobs_impressao ji
+      WHERE ji.id_pedido = p.id AND ji.status = 'concluido') AS unidadesConcluidas,
     DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%sZ') AS createdAt,
     DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updatedAt,
     u.nome   AS nomeUsuario,
@@ -365,6 +375,7 @@ export class PedidoRepository {
 
     if (data.preco       !== undefined) { campos.push("preco = ?");        vals.push(data.preco); }
     if (data.descricao   !== undefined) { campos.push("descricao = ?");    vals.push(data.descricao); }
+    if (data.motivoCancelamento !== undefined) { campos.push("motivo_cancelamento = ?"); vals.push(data.motivoCancelamento); }
     if (data.idMaterial  !== undefined) { campos.push("id_material = ?");  vals.push(data.idMaterial); }
     if (data.idQualidade !== undefined) { campos.push("id_qualidade = ?"); vals.push(data.idQualidade); }
     if (data.idArquivo   !== undefined) { campos.push("id_arquivo = ?");   vals.push(data.idArquivo); }
@@ -486,6 +497,14 @@ export class PedidoRepository {
         transactionStarted = false;
         return "execution_active";
       }
+
+      // id_pedido em pedido_impressora usa ON DELETE RESTRICT (não CASCADE — é
+      // coluna-base da gerada id_pedido_ativo), então o histórico de planejamento
+      // precisa ser removido explicitamente antes do pedido.
+      await connection.execute(
+        "DELETE FROM pedido_impressora WHERE id_pedido = ?",
+        [id],
+      );
 
       const [result]: any = await connection.execute(
         "DELETE FROM pedidos WHERE id = ?",

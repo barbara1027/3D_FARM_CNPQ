@@ -10,6 +10,7 @@ import { EtaEntregaService, ResultadoEtaEntrega } from "./etaEntrega.service";
 import { ImpressoraRepository } from "../impressoras/impressoras.repository";
 import { pedidoEstaProntoParaFila, preservarPrazoEntregaOriginal } from "./baseTemporal.service";
 import { JobImpressaoRepository } from "../fila/jobsImpressao.repository";
+import { emailClienteOrcamentoPronto, emailClientePedidoNaFila } from "../../services/email.service";
 
 const pedidosRoutes = Router();
 
@@ -149,9 +150,20 @@ pedidosRoutes.post("/:id/aprovar", authMiddleware, adminMiddleware,
       }
 
       const [rows]: any = await db.execute(
-        "SELECT id, status, preco FROM pedidos WHERE id = ? LIMIT 1", [id]
+        `SELECT p.id, p.status, p.preco, p.nome, u.nome AS nomeUsuario, u.email AS emailUsuario
+         FROM pedidos p JOIN usuarios u ON u.id = p.id_usuario
+         WHERE p.id = ? LIMIT 1`, [id]
       );
-      return res.status(200).json(rows[0]);
+      const pedido = rows[0];
+      if (pedido?.emailUsuario) {
+        await emailClienteOrcamentoPronto({
+          nome: pedido.nome,
+          nomeUsuario: pedido.nomeUsuario,
+          emailUsuario: pedido.emailUsuario,
+          preco: pedido.preco,
+        });
+      }
+      return res.status(200).json({ id: pedido.id, status: pedido.status, preco: pedido.preco });
     } catch (e: any) {
       return res.status(500).json({ message: e.message });
     }
@@ -380,6 +392,7 @@ pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
       const [updateResult]: any = await db.execute(
         `UPDATE pedidos SET
            status                    = 'na_fila',
+           motivo_falha              = NULL,
            tempo_exec_farm_horas     = ?,
            eta_horas_estimado        = ?,
            eta_calculado_em          = ?,
@@ -420,9 +433,19 @@ pedidosRoutes.post("/:id/reimprimir", authMiddleware, adminMiddleware,
           console.error(`[REIMPRIMIR] Falha ao criar jobs do pedido ${id}:`, err.message),
         );
       const [rows]: any = await db.execute(
-        "SELECT id, status FROM pedidos WHERE id = ? LIMIT 1", [id]
+        `SELECT p.id, p.status, p.nome, u.nome AS nomeUsuario, u.email AS emailUsuario
+         FROM pedidos p JOIN usuarios u ON u.id = p.id_usuario
+         WHERE p.id = ? LIMIT 1`, [id]
       );
-      return res.status(200).json(rows[0]);
+      const pedido = rows[0];
+      if (pedido?.emailUsuario) {
+        await emailClientePedidoNaFila({
+          nome: pedido.nome,
+          nomeUsuario: pedido.nomeUsuario,
+          emailUsuario: pedido.emailUsuario,
+        });
+      }
+      return res.status(200).json({ id: pedido.id, status: pedido.status });
     } catch (e: any) {
       return res.status(500).json({ message: e.message });
     }

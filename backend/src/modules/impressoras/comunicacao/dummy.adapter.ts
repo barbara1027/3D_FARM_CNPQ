@@ -93,4 +93,8 @@ export class DummyPrinterAdapter implements IPrinterCommunicationAdapter {
   async desligarAquecedores(_impressora: Impressora): Promise<void> {
     // Modo DUMMY: nada pra desligar.
   }
+
+  async cancelarImpressao(impressora: Impressora): Promise<void> {
+    dummyJobs.delete(impressora.id);
+  }
 }

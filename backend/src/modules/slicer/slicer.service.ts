@@ -119,6 +119,10 @@ export async function runPrusaSlicer(
     if (p.supports === "touching_buildplate") {
       args.push("--support-material-buildplate-only");
     }
+    if (p.supports === "tree") {
+      // Suporte orgânico/em árvore: menos contato com a peça, mais fácil de remover.
+      args.push("--support-material-style", "organic");
+    }
     if (p.supportAngle) {
       args.push("--support-material-threshold", p.supportAngle);
     }

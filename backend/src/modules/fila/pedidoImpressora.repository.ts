@@ -182,6 +182,12 @@ function normalizarPlanejamento(item: PlanejamentoFilaInput): Required<Planejame
   };
 }
 
+export interface NovaEsperaFilamento {
+  idPedido: number;
+  idImpressora: number;
+  idMaterial: number | null;
+}
+
 export class PedidoImpressoraRepository {
   constructor(
     private readonly jobImpressaoRepository = new JobImpressaoRepository(),
@@ -310,6 +316,7 @@ export class PedidoImpressoraRepository {
           alocacao.statusInicial === "aguardando_filamento" &&
           !esperasAnteriores.has(chaveEspera)
         ) {
+          const idMaterial = pedidosAindaPendentes.get(alocacao.idPedido) ?? null;
           await this.adicionarEvento(
             connection,
             alocacao.idImpressora,
@@ -317,7 +324,7 @@ export class PedidoImpressoraRepository {
             `Pedido ${alocacao.idPedido} aguardando o filamento planejado.`,
             {
               pedidoId: alocacao.idPedido,
-              idMaterial: pedidosAindaPendentes.get(alocacao.idPedido) ?? null,
+              idMaterial,
               idImpressora: alocacao.idImpressora,
             },
           );
@@ -691,8 +698,8 @@ export class PedidoImpressoraRepository {
         [terminal ? "falhou" : "na_fila", tentativasInicio, proximaTentativaEm, idAlocacao],
       );
       await connection.execute(
-        "UPDATE pedidos SET status = ? WHERE id = ?",
-        [terminal ? "falhou" : "na_fila", row.idPedido],
+        "UPDATE pedidos SET status = ?, motivo_falha = ? WHERE id = ?",
+        [terminal ? "falhou" : "na_fila", terminal ? mensagem : null, row.idPedido],
       );
       await connection.execute(
         `UPDATE impressoras
@@ -917,6 +924,89 @@ export class PedidoImpressoraRepository {
     mensagem: string,
   ): Promise<boolean> {
     return this.finalizarExecucao(idImpressora, idPedido, "falhou", mensagem);
+  }
+
+  /**
+   * Parada manual: admin detectou um problema na impressão em andamento (ex.
+   * quantidade errada, falha visível) e a interrompe antes da conclusão. Ao
+   * contrário de falharExecucao (estado terminal), a alocação volta para
+   * 'na_fila' mantendo a mesma posicao_fila — reocupa a posição que já tinha
+   * no planejamento em vez de ir para o fim da fila — para ser reservada de
+   * novo por reservarProximaAlocacao().
+   */
+  async pararExecucao(
+    idImpressora: number,
+    idPedido: number,
+    mensagem = "Impressão interrompida pelo administrador. Pedido devolvido para a fila.",
+  ): Promise<boolean> {
+    validarInteiroPositivo(idImpressora, "idImpressora");
+    validarInteiroPositivo(idPedido, "idPedido");
+    const connection = await db.getConnection();
+    let transactionStarted = false;
+    try {
+      await connection.beginTransaction();
+      transactionStarted = true;
+      const [rows] = await connection.execute(
+        `SELECT pi.id, pi.status, i.status AS statusImpressora,
+                i.id_pedido_atual AS idPedidoAtual
+         FROM pedido_impressora pi
+         INNER JOIN pedidos p ON p.id = pi.id_pedido
+         INNER JOIN impressoras i ON i.id = pi.id_impressora
+         WHERE pi.id_impressora = ? AND pi.id_pedido = ?
+           AND pi.status = 'em_impressao'
+         ORDER BY pi.id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [idImpressora, idPedido],
+      );
+      const row = (rows as any[])[0];
+      if (!row) {
+        await connection.rollback();
+        transactionStarted = false;
+        return false;
+      }
+      if (numeroNullable(row.idPedidoAtual) !== idPedido) {
+        throw new PedidoImpressoraStateError("A execução ativa não corresponde ao pedido e à impressora.");
+      }
+
+      const [allocationUpdate]: any = await connection.execute(
+        "UPDATE pedido_impressora SET status = 'na_fila' WHERE id = ? AND status = 'em_impressao'",
+        [row.id],
+      );
+      const [orderUpdate]: any = await connection.execute(
+        "UPDATE pedidos SET status = 'na_fila' WHERE id = ? AND status = 'em_impressao'",
+        [idPedido],
+      );
+      const [printerUpdate]: any = await connection.execute(
+        `UPDATE impressoras
+         SET status = 'Aguardando Remoção', id_pedido_atual = NULL, job_remoto_id = NULL,
+             ultimo_erro = NULL, ultima_sincronizacao = NOW()
+         WHERE id = ? AND id_pedido_atual = ?`,
+        [idImpressora, idPedido],
+      );
+      if (
+        numero(allocationUpdate.affectedRows) !== 1 ||
+        numero(orderUpdate.affectedRows) !== 1 ||
+        numero(printerUpdate.affectedRows) !== 1
+      ) {
+        throw new PedidoImpressoraStateError("Os estados mudaram durante a interrupção da execução.");
+      }
+      await this.adicionarEvento(
+        connection,
+        idImpressora,
+        "job_stopped",
+        mensagem,
+        { idAlocacao: numero(row.id), pedidoId: idPedido },
+      );
+      await connection.commit();
+      transactionStarted = false;
+      return true;
+    } catch (error) {
+      if (transactionStarted) await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
   private async finalizarExecucao(

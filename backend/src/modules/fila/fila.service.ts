@@ -90,6 +90,11 @@ export class FilaService {
         : [];
 
     try {
+      // NOTA: a branch do João mudou substituirPlanejamento() para não
+      // retornar mais a lista de novas esperas de filamento (retorna void).
+      // A notificação por e-mail dessa transição específica (que existia
+      // antes desta reconciliação) precisa ser refeita em cima do novo
+      // formato — não plugamos de volta aqui pra não alterar o método dele.
       await this.pedidoImpressoraRepo.substituirPlanejamento(novasAlocacoes);
       console.log(`[FilaService] Concluido. ${novasAlocacoes.length} pedidos realocados.`);
       return novasAlocacoes;
