@@ -10,6 +10,18 @@ export type PrinterStatus =
 
 export type ApiProtocol = 'OCTOPRINT' | 'MOONRAKER' | 'DUMMY';
 
+export interface MaterialSlotImpressora {
+  id: number;
+  nome: string;
+  tipo: string;
+  cor: string;
+}
+
+export interface SlotFilamento {
+  numeroSlot: number;
+  material: MaterialSlotImpressora;
+}
+
 export interface Impressora {
   id: number;
   nome: string;
@@ -24,7 +36,10 @@ export interface Impressora {
   jobRemotoId: string | null;
   ultimoErro: string | null;
   ultimaSincronizacao: string | null;
-  idMaterial: number | null;
+  possuiCfs: boolean;
+  larguraMesaMm: number;
+  profundidadeMesaMm: number;
+  filamentosCarregados: SlotFilamento[];
   idPedidoAtual: number | null;
   eficiencia: number;
   taxaErroRecente: number;

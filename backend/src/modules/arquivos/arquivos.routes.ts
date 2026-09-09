@@ -23,8 +23,10 @@ arquivosRoutes.get("/:id/download", authMiddleware, async (req: Request, res: Re
   const arquivo = await arquivoRepository.findById(id);
   if (!arquivo) return res.status(404).json({ message: "Arquivo não encontrado." });
 
-  // Verificação de acesso: admin sempre pode; cliente apenas se o pedido for dele
-  if (user.tipo !== "admin") {
+  // Verificação de acesso (Fase 29): admin sempre pode; cliente comum
+  // precisa ser o dono direto do arquivo OU dono do pedido associado
+  // (cobre arquivos enviados antes da coluna id_usuario existir).
+  if (user.tipo !== "admin" && arquivo.idUsuario !== user.sub) {
     if (!arquivo.idPedido) return res.status(403).json({ message: "Acesso negado." });
     const [rows]: any = await db.execute(
       "SELECT id_usuario FROM pedidos WHERE id = ? LIMIT 1", [arquivo.idPedido]
@@ -34,10 +36,18 @@ arquivosRoutes.get("/:id/download", authMiddleware, async (req: Request, res: Re
     }
   }
 
-  // Path traversal guard
-  const BASE_DIR  = path.resolve(process.cwd());
-  const resolved  = path.resolve(arquivo.caminho);
-  if (!resolved.startsWith(BASE_DIR + path.sep) && resolved !== BASE_DIR) {
+  // Path traversal guard — restringe aos diretórios de armazenamento
+  // configurados (STL em UPLOAD_DIR, G-code em GCODE_DIR), não a
+  // process.cwd(): quando qualquer um dos dois é um caminho absoluto fora da
+  // pasta do backend, comparar com process.cwd() rejeitava até o dono
+  // legítimo do arquivo.
+  const UPLOAD_BASE_DIR = path.resolve(process.env.UPLOAD_DIR ?? "uploads");
+  const GCODE_BASE_DIR  = path.resolve(process.env.GCODE_DIR ?? "gcode_storage");
+  const resolved = path.resolve(arquivo.caminho);
+  const dentroDeUmDiretorioPermitido =
+    resolved === UPLOAD_BASE_DIR || resolved.startsWith(UPLOAD_BASE_DIR + path.sep) ||
+    resolved === GCODE_BASE_DIR  || resolved.startsWith(GCODE_BASE_DIR + path.sep);
+  if (!dentroDeUmDiretorioPermitido) {
     return res.status(403).json({ message: "Acesso negado." });
   }
 

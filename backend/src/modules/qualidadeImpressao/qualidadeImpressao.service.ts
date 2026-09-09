@@ -54,7 +54,17 @@ export class QualidadeImpressaoService {
     if (!(await this.qualidadeImpressaoRepository.findById(id))) {
       throw new Error("Qualidade não encontrada.");
     }
-    await this.qualidadeImpressaoRepository.delete(id);
+    try {
+      await this.qualidadeImpressaoRepository.delete(id);
+    } catch (e: any) {
+      // Mesmo tratamento de MaterialService.remover: sem isso, a violação da
+      // FK fk_pedidos_qualidade (ON DELETE RESTRICT) vazava como 500 com o
+      // erro cru do MySQL em vez de um 409 de conflito.
+      if (e.code === "ER_ROW_IS_REFERENCED_2" || e.errno === 1451) {
+        throw new Error("Esta qualidade está vinculada a pedidos e não pode ser removida.");
+      }
+      throw e;
+    }
     return { message: "Qualidade removida com sucesso." };
   }
 }

@@ -1,24 +1,44 @@
-CREATE TABLE IF NOT EXISTS pedido_impressora (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  id_pedido INT UNSIGNED NOT NULL,
-  id_impressora INT UNSIGNED NOT NULL,
-  status ENUM('na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado') NOT NULL DEFAULT 'na_fila',
-  posicao_fila INT NOT NULL,
-  inicio_previsto_horas DECIMAL(8,2) NULL,
-  conclusao_prevista_horas DECIMAL(8,2) NULL,
-  custo DECIMAL(10,4) NULL,
-  setup_horas DECIMAL(8,2) NULL,
-  risco_esperado_horas DECIMAL(8,2) NULL,
-  tempo_total_horas DECIMAL(8,2) NULL,
-  atraso_horas DECIMAL(8,2) NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_fila_pedido
-    FOREIGN KEY (id_pedido) REFERENCES pedidos(id)
-    ON DELETE CASCADE
-    ON UPDATE CASCADE,
-  CONSTRAINT fk_fila_impressora
-    FOREIGN KEY (id_impressora) REFERENCES impressoras(id)
-    ON DELETE CASCADE
-    ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- id_pedido usa ON DELETE RESTRICT (não CASCADE): é coluna-base da gerada
+-- id_pedido_ativo, e o InnoDB não permite CASCADE/SET NULL em FK que
+-- referencia coluna-base de coluna gerada. pedidos.repository.ts:delete()
+-- apaga as linhas desta tabela explicitamente antes do DELETE do pedido.
+CREATE TABLE `pedido_impressora` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id_pedido` INT UNSIGNED NOT NULL,
+  `id_impressora` INT UNSIGNED NOT NULL,
+  `status` ENUM('na_fila', 'reservado', 'aguardando_filamento', 'em_impressao', 'concluido', 'falhou', 'cancelado') NOT NULL DEFAULT 'na_fila',
+  `posicao_fila` INT UNSIGNED NOT NULL,
+  `numero_slot_planejado` TINYINT UNSIGNED NULL,
+  `requer_troca_manual` TINYINT(1) NOT NULL DEFAULT 0,
+  `tentativas_inicio` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `proxima_tentativa_em` DATETIME NULL,
+  `inicio_previsto_horas` DECIMAL(8,2) NULL,
+  `conclusao_prevista_horas` DECIMAL(8,2) NULL,
+  `custo` DECIMAL(10,4) NULL,
+  `setup_horas` DECIMAL(8,2) NULL,
+  `risco_esperado_horas` DECIMAL(8,2) NULL,
+  `tempo_total_horas` DECIMAL(8,2) NULL,
+  `atraso_horas` DECIMAL(8,2) NULL,
+  `id_pedido_ativo` INT UNSIGNED GENERATED ALWAYS AS (
+    CASE WHEN `status` IN ('na_fila', 'reservado', 'aguardando_filamento', 'em_impressao') THEN `id_pedido` ELSE NULL END
+  ) STORED,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pedido_impressora_pedido_ativo` (`id_pedido_ativo`),
+  KEY `idx_pedido_impressora_impressora_status_posicao` (`id_impressora`, `status`, `posicao_fila`),
+  KEY `idx_pedido_impressora_pedido_status` (`id_pedido`, `status`),
+  KEY `idx_pedido_impressora_status_tentativa` (`status`, `proxima_tentativa_em`),
+  CONSTRAINT `fk_pedido_impressora_pedido` FOREIGN KEY (`id_pedido`) REFERENCES `pedidos` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_pedido_impressora_impressora` FOREIGN KEY (`id_impressora`) REFERENCES `impressoras` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+  CONSTRAINT `chk_pedido_impressora_posicao_positive` CHECK (`posicao_fila` > 0),
+  CONSTRAINT `chk_pedido_impressora_slot_planejado_range` CHECK (`numero_slot_planejado` IS NULL OR `numero_slot_planejado` BETWEEN 1 AND 4),
+  CONSTRAINT `chk_pedido_impressora_troca_manual_boolean` CHECK (`requer_troca_manual` IN (0, 1)),
+  CONSTRAINT `chk_pedido_impressora_inicio_nonnegative` CHECK (`inicio_previsto_horas` IS NULL OR `inicio_previsto_horas` >= 0),
+  CONSTRAINT `chk_pedido_impressora_conclusao_nonnegative` CHECK (`conclusao_prevista_horas` IS NULL OR `conclusao_prevista_horas` >= 0),
+  CONSTRAINT `chk_pedido_impressora_custo_nonnegative` CHECK (`custo` IS NULL OR `custo` >= 0),
+  CONSTRAINT `chk_pedido_impressora_setup_nonnegative` CHECK (`setup_horas` IS NULL OR `setup_horas` >= 0),
+  CONSTRAINT `chk_pedido_impressora_risco_nonnegative` CHECK (`risco_esperado_horas` IS NULL OR `risco_esperado_horas` >= 0),
+  CONSTRAINT `chk_pedido_impressora_tempo_nonnegative` CHECK (`tempo_total_horas` IS NULL OR `tempo_total_horas` >= 0),
+  CONSTRAINT `chk_pedido_impressora_atraso_nonnegative` CHECK (`atraso_horas` IS NULL OR `atraso_horas` >= 0)
+) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

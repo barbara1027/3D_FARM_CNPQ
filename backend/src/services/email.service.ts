@@ -16,7 +16,10 @@ function createTransporter() {
 }
 
 async function send(subject: string, html: string): Promise<void> {
-  if (!ADMIN_EMAIL || !process.env.EMAIL_USER) return;
+  if (!ADMIN_EMAIL || !process.env.EMAIL_USER) {
+    console.log(`[EMAIL] SMTP não configurado — enviaria ao admin (${ADMIN_EMAIL || "sem ADMIN_EMAIL"}): "${subject}"`);
+    return;
+  }
   try {
     await createTransporter().sendMail({ from: FROM_EMAIL, to: ADMIN_EMAIL, subject, html });
   } catch (err: any) {
@@ -25,7 +28,10 @@ async function send(subject: string, html: string): Promise<void> {
 }
 
 async function sendTo(to: string, subject: string, html: string): Promise<void> {
-  if (!to || !process.env.EMAIL_USER) return;
+  if (!to || !process.env.EMAIL_USER) {
+    console.log(`[EMAIL] SMTP não configurado — enviaria para ${to || "(sem destinatário)"}: "${subject}"`);
+    return;
+  }
   try {
     await createTransporter().sendMail({ from: FROM_EMAIL, to, subject, html });
   } catch (err: any) {
@@ -97,6 +103,177 @@ export async function emailPedidoFalhou(pedido: {
   await send(`[3D Farm] Falha no pedido #${pedido.id}: ${pedido.nome}`, baseTemplate("❌ Falha no pipeline", "#f44336", body));
 }
 
+export async function emailClientePedidoCancelado(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string; motivo?: string;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Seu pedido <strong>${pedido.nome}</strong> foi cancelado.</p>
+    ${pedido.motivo ? table(row("Motivo", pedido.motivo)) : ''}
+    <p style="margin-top:16px">Se isso foi um engano ou você tem dúvidas, entre em contato com a gente.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/dashboard"
+         style="background:#757575;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver Meus Pedidos
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Pedido cancelado: ${pedido.nome}`,
+    baseTemplate("🚫 Pedido cancelado", "#757575", body),
+  );
+}
+
+export async function emailClientePedidoEmRevisao(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Sua peça <strong>${pedido.nome}</strong> tem uma geometria mais complexa e precisa passar por uma revisão rápida da nossa equipe antes de seguir para o pagamento.</p>
+    <p>Assim que a revisão terminar, o orçamento fica disponível no seu painel e você recebe um novo aviso por e-mail.</p>
+    <p style="margin-top:16px">Você pode acompanhar o status do pedido a qualquer momento pelo link abaixo.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/quotes"
+         style="background:#ff9800;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver Meus Orçamentos
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Seu pedido está em revisão: ${pedido.nome}`,
+    baseTemplate("🔍 Pedido em revisão", "#ff9800", body),
+  );
+}
+
+export async function emailClienteOrcamentoPronto(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string; preco: number;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>O orçamento da sua peça <strong>${pedido.nome}</strong> ficou pronto: <strong>R$ ${Number(pedido.preco).toFixed(2)}</strong>.</p>
+    <p style="margin-top:16px">Finalize o pagamento para que sua peça entre na fila de impressão.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/quotes"
+         style="background:#2196f3;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver e Pagar Orçamento
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Orçamento pronto: ${pedido.nome}`,
+    baseTemplate("💰 Orçamento pronto para pagamento", "#2196f3", body),
+  );
+}
+
+export async function emailClientePedidoNaFila(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Recebemos a confirmação do seu pagamento. Sua peça <strong>${pedido.nome}</strong> entrou na fila de impressão.</p>
+    <p style="margin-top:16px">Você pode acompanhar a posição e o andamento do seu pedido pelo painel.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/dashboard"
+         style="background:#3f51b5;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver Meus Pedidos
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Pedido na fila de impressão: ${pedido.nome}`,
+    baseTemplate("📋 Pedido na fila de impressão", "#3f51b5", body),
+  );
+}
+
+export async function emailClienteImpressaoIniciada(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Boas notícias: sua peça <strong>${pedido.nome}</strong> começou a ser impressa agora!</p>
+    <p style="margin-top:16px">Assim que a impressão terminar, você recebe um novo aviso por aqui.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/dashboard"
+         style="background:#009688;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Acompanhar Pedido
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Sua peça está sendo impressa: ${pedido.nome}`,
+    baseTemplate("🖨️ Impressão iniciada", "#009688", body),
+  );
+}
+
+export async function emailClienteCopiaConcluida(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string;
+  copiaAtual: number; totalCopias: number;
+}): Promise<void> {
+  const restantes = pedido.totalCopias - pedido.copiaAtual;
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Mais uma unidade da sua peça <strong>${pedido.nome}</strong> acabou de sair da impressora:
+    <strong>${pedido.copiaAtual} de ${pedido.totalCopias} prontas</strong>.</p>
+    <p style="margin-top:16px">${
+      restantes > 0
+        ? `Faltam ${restantes} unidade${restantes > 1 ? 's' : ''}. Assim que a impressora ficar livre, a próxima entra pra imprimir automaticamente.`
+        : 'Essa era a última unidade — seu pedido está completo!'
+    }</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/dashboard"
+         style="background:#009688;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Acompanhar Pedido
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] ${pedido.copiaAtual} de ${pedido.totalCopias} prontas: ${pedido.nome}`,
+    baseTemplate("🖨️ Uma unidade concluída", "#009688", body),
+  );
+}
+
+export async function emailClientePedidoFalhou(pedido: {
+  nome: string; emailUsuario: string; nomeUsuario?: string; motivo?: string;
+}): Promise<void> {
+  const body = `
+    <p>Olá${pedido.nomeUsuario ? ` <strong>${pedido.nomeUsuario}</strong>` : ''}!</p>
+    <p>Infelizmente não conseguimos processar sua peça <strong>${pedido.nome}</strong>. Nossa equipe já foi notificada e vai analisar o problema.</p>
+    ${table(row("Detalhe técnico", pedido.motivo ?? "Erro desconhecido"))}
+    <p style="margin-top:16px">Você pode acompanhar o status pelo seu painel, ou entrar em contato com a gente pra resolvermos juntos.</p>
+    <p style="margin-top:20px">
+      <a href="${process.env.FRONTEND_URL ?? 'http://localhost:5173'}/dashboard"
+         style="background:#f44336;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver Meus Pedidos
+      </a>
+    </p>`;
+  await sendTo(
+    pedido.emailUsuario,
+    `[3D Farm] Houve um problema com sua peça: ${pedido.nome}`,
+    baseTemplate("❌ Não foi possível processar sua peça", "#f44336", body),
+  );
+}
+
+export async function emailAguardandoFilamento(pedido: {
+  id: number; nome: string; nomeUsuario?: string; emailUsuario?: string;
+  impressora: string; motivo: string;
+}): Promise<void> {
+  const body = `
+    <p>Um pedido está <strong>aguardando troca manual de filamento</strong> e não será atribuído automaticamente até a intervenção do operador.</p>
+    ${table(
+      row("ID do Pedido", `#${pedido.id}`) +
+      row("Nome",         pedido.nome) +
+      row("Cliente",      `${pedido.nomeUsuario ?? "—"} (${pedido.emailUsuario ?? "—"})`) +
+      row("Impressora",   pedido.impressora) +
+      row("Detalhe",      pedido.motivo)
+    )}
+    <p style="margin-top:20px">
+      <a href="http://localhost:5173/admin/printers" style="background:#ff9800;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none;font-weight:bold">
+        Ver impressoras
+      </a>
+    </p>`;
+  await send(`[3D Farm] Troca de filamento necessária: ${pedido.nome}`, baseTemplate("🧵 Aguardando troca de filamento", "#ff9800", body));
+}
+
 export async function emailPedidoConcluido(pedido: {
   id: number; nome: string; nomeUsuario?: string; emailUsuario?: string;
   preco: number; tempoEstimadoS?: number | null; materialGramas?: number | null;
@@ -110,7 +287,7 @@ export async function emailPedidoConcluido(pedido: {
       row("ID do Pedido",    `#${pedido.id}`) +
       row("Nome",            pedido.nome) +
       row("Cliente",         `${pedido.nomeUsuario ?? "—"} (${pedido.emailUsuario ?? "—"})`) +
-      row("Valor",           `R$ ${pedido.preco.toFixed(2)}`) +
+      row("Valor",           `R$ ${Number(pedido.preco).toFixed(2)}`) +
       row("Tempo impresso",  tempo) +
       row("Material usado",  pedido.materialGramas ? `${Number(pedido.materialGramas).toFixed(1)}g` : "—")
     )}`;

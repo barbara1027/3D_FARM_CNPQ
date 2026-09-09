@@ -13,6 +13,14 @@ const dummyJobs = new Map<number, { jobId: string; finishAt: number }>();
 // Duração simulada de impressão: 10 minutos (tempo suficiente para testar progress bar)
 const DUMMY_PRINT_DURATION_MS = 10 * 60 * 1000;
 
+/** Compartilha o estado físico simulado entre os fluxos DUMMY comum e CFS. */
+export function registrarInicioDummy(idImpressora: number, jobId: string): void {
+  dummyJobs.set(idImpressora, {
+    jobId,
+    finishAt: Date.now() + DUMMY_PRINT_DURATION_MS,
+  });
+}
+
 export class DummyPrinterAdapter implements IPrinterCommunicationAdapter {
   readonly protocolo = "DUMMY" as const;
 
@@ -28,10 +36,7 @@ export class DummyPrinterAdapter implements IPrinterCommunicationAdapter {
     payload: PrinterJobPayload,
   ): Promise<PrinterStartJobResult> {
     const jobId = `dummy-${Date.now()}`;
-    dummyJobs.set(impressora.id, {
-      jobId,
-      finishAt: Date.now() + DUMMY_PRINT_DURATION_MS,
-    });
+    registrarInicioDummy(impressora.id, jobId);
     return {
       ok: true,
       mensagem: `Modo DUMMY: envio simulado do arquivo ${payload.nomeArquivo}. Impressão termina em 2 minutos.`,
@@ -39,6 +44,10 @@ export class DummyPrinterAdapter implements IPrinterCommunicationAdapter {
       nomeArquivoRemoto: payload.nomeArquivo,
       rawStatus: { simulado: true },
     };
+  }
+
+  registrarInicioExternoSimulado(impressora: Impressora, jobRemotoId: string): void {
+    registrarInicioDummy(impressora.id, jobRemotoId);
   }
 
   async getStatus(impressora: Impressora): Promise<PrinterRuntimeStatus> {
@@ -83,5 +92,9 @@ export class DummyPrinterAdapter implements IPrinterCommunicationAdapter {
 
   async desligarAquecedores(_impressora: Impressora): Promise<void> {
     // Modo DUMMY: nada pra desligar.
+  }
+
+  async cancelarImpressao(impressora: Impressora): Promise<void> {
+    dummyJobs.delete(impressora.id);
   }
 }

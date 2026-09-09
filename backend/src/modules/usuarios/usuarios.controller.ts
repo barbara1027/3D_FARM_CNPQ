@@ -58,6 +58,15 @@ export class UsuarioController {
     try {
       const id = Number(req.params.id);
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
+
+      // Sem esta checagem, qualquer cliente autenticado podia ler o perfil de
+      // qualquer outro usuário por ID — a rota só tinha authMiddleware, sem
+      // dono nem admin (diferente de PUT/DELETE, que já exigiam um dos dois).
+      const caller = req.jwtUser!;
+      if (caller.tipo !== "admin" && caller.sub !== id) {
+        return res.status(403).json({ message: "Sem permissão para visualizar este usuário." });
+      }
+
       const usuario = await this.usuarioService.buscarPorId(id);
       if (!usuario) return res.status(404).json({ message: "Usuário não encontrado." });
       return res.status(200).json(usuario);

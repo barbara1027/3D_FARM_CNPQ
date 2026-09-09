@@ -17,6 +17,15 @@ export interface LoginResult {
   usuario: UsuarioPublico;
 }
 
+// Hash bcrypt de formato válido que nunca corresponde a nenhuma senha real —
+// usado só para que bcrypt.compare sempre rode com o mesmo custo, mesmo
+// quando o e-mail não existe ou a conta não tem senha (Google). Sem isso, a
+// resposta para "e-mail inexistente" (falha antes do bcrypt) é
+// mensuravelmente mais rápida que "senha errada" (roda o bcrypt inteiro),
+// permitindo enumerar contas só pelo tempo de resposta.
+const HASH_SEM_CORRESPONDENCIA =
+  "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
 export function gerarToken(usuario: { id: number; email: string; tipo: "admin" | "cliente"; nivel: "iniciante" | "avancado" }): string {
   return jwt.sign(
     { sub: usuario.id, email: usuario.email, tipo: usuario.tipo, nivel: usuario.nivel },
@@ -31,6 +40,12 @@ export class AuthService {
   async login(data: LoginDTO): Promise<LoginResult> {
     const usuario = await this.usuarioRepository.findByEmail(data.email);
 
+    // Roda sempre, antes de qualquer branch de erro — ver HASH_SEM_CORRESPONDENCIA.
+    const senhaValida = await bcrypt.compare(
+      data.senha,
+      usuario?.senha_hash ?? HASH_SEM_CORRESPONDENCIA,
+    );
+
     if (!usuario) throw new Error("Credenciais inválidas.");
 
     // Conta criada pelo Google sem senha
@@ -38,7 +53,6 @@ export class AuthService {
       throw new Error("Esta conta foi criada com o Google. Use o botão 'Entrar com Google'.");
     }
 
-    const senhaValida = await bcrypt.compare(data.senha, usuario.senha_hash);
     if (!senhaValida) throw new Error("Credenciais inválidas.");
 
     const { senha_hash, ...usuarioPublico } = usuario;

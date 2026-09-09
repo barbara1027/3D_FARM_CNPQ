@@ -38,10 +38,102 @@ export interface PrinterJobPayload {
   conteudo: Buffer;
 }
 
+/**
+ * Material escolhido pelo planejamento da 3D Farm. `idMaterialBanco` pertence
+ * exclusivamente ao banco da aplicação e não identifica um material no CFS.
+ */
+export interface MaterialPlanejado {
+  idMaterialBanco: number;
+  numeroSlot: number;
+}
+
+/** Endereço físico relatado pelo inventário atual do dispositivo. */
+export interface EnderecoFisicoCfs {
+  boxId: number | string;
+  deviceMaterialId: number | string;
+  numeroSlot: number;
+}
+
+export interface CfsInventoryItem extends EnderecoFisicoCfs {
+  tipoMaterial?: string;
+  cor?: string;
+}
+
+export interface CfsInventory {
+  itens: CfsInventoryItem[];
+  consultadoEm?: string;
+}
+
+/**
+ * Mapeamento explícito entre o filamento lógico do arquivo e o endereço
+ * físico do CFS. O adapter nunca escolhe nem presume o extrusor lógico.
+ */
+export interface CfsFilamentMapping {
+  extrusorLogico: number;
+  materialPlanejado: MaterialPlanejado;
+  enderecoFisico: EnderecoFisicoCfs;
+  tipoMaterial?: string;
+  cor?: string;
+}
+
+export interface CfsPrintSubmission {
+  caminhoGcode: string;
+  nomeArquivo: string;
+  /** Literal `true`: este contrato existe somente para o fluxo CFS. */
+  openCfs: true;
+  filamentos: CfsFilamentMapping[];
+}
+
+export interface CfsPrintStartResult {
+  ok: boolean;
+  aceito: boolean;
+  confirmadoFisicamente: boolean;
+  mensagem: string;
+  jobRemotoId?: string | null;
+  nomeArquivoRemoto?: string | null;
+  mapeamentoAplicado: CfsFilamentMapping[];
+  rawStatus?: unknown;
+}
+
+export type CfsPrintErrorCode =
+  | "CFS_MAPPING_UNSUPPORTED"
+  | "CFS_NOT_CONFIGURED"
+  | "CFS_INVENTORY_UNAVAILABLE"
+  | "CFS_SLOT_NOT_FOUND"
+  | "CFS_MAPPING_INVALID";
+
+export const CFS_MAPPING_UNSUPPORTED: CfsPrintErrorCode = "CFS_MAPPING_UNSUPPORTED";
+
+export class CfsPrintAdapterError extends Error {
+  constructor(
+    readonly code: CfsPrintErrorCode,
+    mensagem: string,
+  ) {
+    super(`${code}: ${mensagem}`);
+    this.name = "CfsPrintAdapterError";
+  }
+}
+
+export interface CfsPrintSubmissionAdapter {
+  readonly tipo: "CREALITY_CFS" | "DUMMY_CFS";
+  /** Configuração em memória disponível somente em adapters simulados. */
+  configurarInventarioCfs?(idImpressora: number, inventario: CfsInventory): void;
+  consultarInventarioCfs(impressora: Impressora): Promise<CfsInventory>;
+  enviarEIniciarComMapeamento(
+    impressora: Impressora,
+    entrada: CfsPrintSubmission,
+  ): Promise<CfsPrintStartResult>;
+}
+
 export interface IPrinterCommunicationAdapter {
   readonly protocolo: ProtocoloImpressora;
   healthCheck(impressora: Impressora): Promise<PrinterHealthCheckResult>;
   uploadAndStart(impressora: Impressora, payload: PrinterJobPayload): Promise<PrinterStartJobResult>;
+  /**
+   * Gancho sem I/O externo usado somente para sincronizar o controle DUMMY
+   * quando o job foi iniciado pelo adapter DUMMY CFS.
+   */
+  registrarInicioExternoSimulado?(impressora: Impressora, jobRemotoId: string): void;
   getStatus(impressora: Impressora): Promise<PrinterRuntimeStatus>;
   /**
    * Desliga bico e mesa. Chamado sempre que um job é encerrado pelo nosso
@@ -52,4 +144,10 @@ export interface IPrinterCommunicationAdapter {
    * quente e parado, escorrendo/entupindo até o próximo job.
    */
   desligarAquecedores(impressora: Impressora): Promise<void>;
+  /**
+   * Cancela o job em andamento na impressora física. Chamado quando o admin
+   * detecta uma falha de impressão e aciona a parada manual — best-effort:
+   * o orquestrador segue com a devolução do pedido pra fila mesmo se isso falhar.
+   */
+  cancelarImpressao(impressora: Impressora): Promise<void>;
 }

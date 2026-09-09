@@ -88,8 +88,15 @@ export class MaterialController {
       if (!nome || !tipo || preco === undefined || !status) {
         return res.status(400).json({ message: "Os campos nome, tipo, preco e status são obrigatórios." });
       }
+      // Sem esta checagem, um preço negativo só era barrado pela CHECK
+      // constraint do banco (chk_materiais_preco_nonnegative), que vaza como
+      // 500 genérico em vez de um 400 de validação.
+      const precoNum = Number(preco);
+      if (!Number.isFinite(precoNum) || precoNum < 0) {
+        return res.status(400).json({ message: "preco deve ser um número não-negativo." });
+      }
       return res.status(201).json(await this.materialService.criar({
-        nome, tipo, preco, status, cor: cor ?? "",
+        nome, tipo, preco: precoNum, status, cor: cor ?? "",
         diametro: diametro ?? 1.75,
         tempBicoMin: tempBicoMin ?? null, tempBicoMax: tempBicoMax ?? null,
         tempMesaMin: tempMesaMin ?? null, tempMesaMax: tempMesaMax ?? null,
@@ -134,8 +141,15 @@ export class MaterialController {
       const { nome, tipo, preco, status, cor, diametro,
               tempBicoMin, tempBicoMax, tempMesaMin, tempMesaMax,
               fanMin, fanMax, camadaMin, camadaMax } = req.body;
+      let precoNum: number | undefined;
+      if (preco !== undefined) {
+        precoNum = Number(preco);
+        if (!Number.isFinite(precoNum) || precoNum < 0) {
+          return res.status(400).json({ message: "preco deve ser um número não-negativo." });
+        }
+      }
       return res.status(200).json(await this.materialService.atualizar(id, {
-        nome, tipo, preco, status, cor, diametro,
+        nome, tipo, preco: precoNum, status, cor, diametro,
         tempBicoMin, tempBicoMax, tempMesaMin, tempMesaMax,
         fanMin, fanMax, camadaMin, camadaMax,
       }));
@@ -164,6 +178,8 @@ export class MaterialController {
    *         description: Material removido
    *       404:
    *         description: Material não encontrado
+   *       409:
+   *         description: Material vinculado a pedidos ou slots de impressoras
    */
   remover = async (req: Request, res: Response) => {
     try {
@@ -171,7 +187,12 @@ export class MaterialController {
       if (Number.isNaN(id)) return res.status(400).json({ message: "ID inválido." });
       return res.status(200).json(await this.materialService.remover(id));
     } catch (error: any) {
-      const statusCode = error.message === "Material não encontrado." ? 404 : 500;
+      const statusCode =
+        error.message === "Material não encontrado."
+          ? 404
+          : error.message.includes("pedidos ou slots de impressoras")
+            ? 409
+            : 500;
       return res.status(statusCode).json({ message: error.message });
     }
   };

@@ -41,7 +41,7 @@ export function QuotesPage() {
       .then(r => {
         const all = r.data.map((p: any) => normalizePedido(p) as Pedido);
 
-        const VISIBLE: Pedido['status'][] = ['analisando', 'aguardando_pagamento', 'aguardando_revisao'];
+        const VISIBLE: Pedido['status'][] = ['analisando', 'aguardando_pagamento', 'aguardando_revisao', 'falhou'];
         setPedidos(
           all
             .filter((p: Pedido) => VISIBLE.includes(p.status))
@@ -82,7 +82,9 @@ export function QuotesPage() {
   };
 
   const aguardandoPagamento = pedidos.filter(p => p.status === 'aguardando_pagamento');
-  const emRevisao = pedidos.filter(p => p.status === 'aguardando_revisao' || p.status === 'analisando');
+  const emRevisao = pedidos.filter(p =>
+    p.status === 'aguardando_revisao' || p.status === 'analisando' || p.status === 'falhou'
+  );
 
   if (loading) return (
     <Box display="flex" justifyContent="center" alignItems="center" sx={{ height: '60vh' }}>
@@ -106,6 +108,19 @@ export function QuotesPage() {
             </Typography>
             <LinearProgress variant="indeterminate" sx={{ borderRadius: 2 }} />
           </Box>
+        )}
+
+        {/* Falhou — mostra o motivo e orienta o cliente */}
+        {p.status === 'falhou' && (
+          <Alert severity="error" sx={{ mt: 1.5, borderRadius: 2 }}>
+            <Typography variant="body2" fontWeight={600}>Não foi possível processar sua peça.</Typography>
+            <Typography variant="body2" sx={{ mt: 0.5 }}>
+              {p.motivoFalha ?? 'Erro desconhecido.'}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+              Nossa equipe já foi notificada e vai entrar em contato pra resolver.
+            </Typography>
+          </Alert>
         )}
 
         {/* Em revisão — não mostra preço */}
@@ -236,6 +251,15 @@ export function QuotesPage() {
               <ListItem>
                 <ListItemText primary="Status" secondary={getStatusTranslation(sel.status)} />
               </ListItem>
+              {sel.status === 'falhou' && (
+                <ListItem sx={{ bgcolor: 'error.50', borderRadius: 1 }}>
+                  <ListItemText
+                    primary="Motivo da falha"
+                    secondary={sel.motivoFalha ?? 'Erro desconhecido.'}
+                    primaryTypographyProps={{ color: 'error.dark', fontWeight: 600 }}
+                  />
+                </ListItem>
+              )}
               <ListItem>
                 <ListItemText primary="Material" secondary={sel.nomeMaterial ?? '—'} />
               </ListItem>

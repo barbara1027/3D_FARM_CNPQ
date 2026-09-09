@@ -47,10 +47,27 @@ export function gcodeOutputPath(pedidoId: number): string {
   return path.join(dir, `pedido_${pedidoId}.gcode`);
 }
 
+const CENTRO_PADRAO_MM = { x: 110, y: 110 };
+
+export interface BedCenter {
+  x: number;
+  y: number;
+  // Dimensões reais da mesa, em mm. Quando ausentes, a mesa é assumida
+  // quadrada com base no dobro do centro (compatibilidade com o padrão
+  // antigo, que só informava o centro).
+  larguraMesaMm?: number;
+  profundidadeMesaMm?: number;
+}
+
 export async function runPrusaSlicer(
   stlPath:    string,
   outputPath: string,
   params:     SliceParams = {},
+  // Centro da mesa usado pelo slicer. Não assume mais uma mesa fixa
+  // 220×220: quem chama informa o centro real (ou o maior conhecido entre
+  // as impressoras cadastradas — ver auto-slice.service.ts), garantindo que
+  // o G-code não fique deslocado para máquinas com mesa maior/menor.
+  bedCenter:  BedCenter = CENTRO_PADRAO_MM,
 ): Promise<void> {
   const prusaExe = process.env.PRUSA_SLICER_PATH ??
     "/Applications/PrusaSlicer.app/Contents/MacOS/PrusaSlicer";
@@ -58,11 +75,30 @@ export async function runPrusaSlicer(
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   const p = { ...DEFAULTS, ...params };
+  const centro = {
+    x: Number.isFinite(bedCenter?.x) && bedCenter.x > 0 ? bedCenter.x : CENTRO_PADRAO_MM.x,
+    y: Number.isFinite(bedCenter?.y) && bedCenter.y > 0 ? bedCenter.y : CENTRO_PADRAO_MM.y,
+  };
+  // Sem --bed-shape, o PrusaSlicer usa a mesa padrão embutida no CLI (não a
+  // mesa real da impressora), e pode recusar peças válidas como "fora da
+  // área de impressão" mesmo com --center correto. Quando as dimensões reais
+  // não são informadas, assume mesa quadrada do dobro do centro (mesma
+  // suposição que o --center já fazia implicitamente).
+  const larguraMesa =
+    Number.isFinite(bedCenter?.larguraMesaMm) && bedCenter!.larguraMesaMm! > 0
+      ? bedCenter!.larguraMesaMm!
+      : centro.x * 2;
+  const profundidadeMesa =
+    Number.isFinite(bedCenter?.profundidadeMesaMm) && bedCenter!.profundidadeMesaMm! > 0
+      ? bedCenter!.profundidadeMesaMm!
+      : centro.y * 2;
+  const bedShape = `0x0,${larguraMesa}x0,${larguraMesa}x${profundidadeMesa},0x${profundidadeMesa}`;
 
   const args: string[] = [
     "--slice",
     "--gcode-comments",
-    "--center",              "110,110",
+    "--bed-shape",            bedShape,
+    "--center",              `${centro.x},${centro.y}`,
     "--scale",               "1",
     "--layer-height",        p.layerHeight,
     "--fill-density",        `${p.infill}%`,
@@ -82,6 +118,10 @@ export async function runPrusaSlicer(
     args.push("--support-material");
     if (p.supports === "touching_buildplate") {
       args.push("--support-material-buildplate-only");
+    }
+    if (p.supports === "tree") {
+      // Suporte orgânico/em árvore: menos contato com a peça, mais fácil de remover.
+      args.push("--support-material-style", "organic");
     }
     if (p.supportAngle) {
       args.push("--support-material-threshold", p.supportAngle);

@@ -1,4 +1,5 @@
 import { db } from "../../database/connection";
+import { DadosBaseTemporal, pedidoEstaProntoParaFila } from "./baseTemporal.service";
 
 export type StatusPedido =
   | "analisando"           // slicer rodando em background
@@ -27,6 +28,8 @@ export interface Pedido {
   materialGramas: number | null;
   scoreComplexidade: number | null;
   motivoComplexidade: string | null;
+  motivoFalha: string | null;
+  motivoCancelamento: string | null;
   precoBase: number | null;
   taxaComplexidade: number | null;
   taxaStripe: number | null;
@@ -45,6 +48,13 @@ export interface Pedido {
   bufferPrioridadeHoras: number | null;
   bufferSegurancaHoras: number | null;
   tempoExecFarmHoras: number | null;
+  // dimensões físicas da peça (bounding box do G-code, ver Fase 7)
+  dimensaoXMm: number | null;
+  dimensaoYMm: number | null;
+  dimensaoZMm: number | null;
+  // progresso de impressão por unidade (jobs_impressao) — 0 quando o pedido
+  // ainda não tem jobs cadastrados (não pago) ou nenhuma unidade terminou
+  unidadesConcluidas: number;
   // campos JOIN
   nomeUsuario?: string;
   emailUsuario?: string;
@@ -54,15 +64,35 @@ export interface Pedido {
   idArquivoGcode?: number | null;
 }
 
+/**
+ * Pedido validado e pronto para a heurística de fila / cálculo de workload.
+ * Diferente do `Pedido` geral (onde os campos temporais podem ser `null`
+ * enquanto o pedido ainda está em `analisando`), todo campo aqui é
+ * obrigatório: `findPendentesParaOtimizacao` só devolve pedidos que já
+ * passaram por `pedidoEstaProntoParaFila`.
+ */
 export interface PedidoOtimizacaoRow {
   id: number;
   idMaterial: number;
   tempoGcodeHoras: number;
+  prazoEntrega: string;
+  prazoEntregaOriginal: string;
   prazoEntregaHoras: number;
-  tempoMaximoEsperaHoras: number | null;
-  limiteInicioImpressao: string | null;
+  limiteInicioImpressao: string;
+  etaHorasEstimado: number;
+  etaCalculadoEm: string;
+  tempoExecFarmHoras: number;
+  tempoMaximoEsperaHoras: number;
+  bufferPrioridadeHoras: number;
+  bufferSegurancaHoras: number;
   criadoEm: Date;
   prioridadePaga: boolean;
+  // Dimensões físicas da peça (Fase 7/20) — opcionais: pedidos antigos ou
+  // sem G-code analisado não bloqueiam a fila por falta desse dado; nesse
+  // caso a checagem de compatibilidade com a mesa simplesmente não filtra.
+  dimensaoXMm: number | null;
+  dimensaoYMm: number | null;
+  dimensaoZMm: number | null;
 }
 
 export interface CreatePedidoRepositoryDTO {
@@ -94,6 +124,7 @@ export interface UpdatePedidoRepositoryDTO {
   preco?: number;
   descricao?: string | null;
   status?: StatusPedido;
+  motivoCancelamento?: string | null;
   idMaterial?: number;
   idQualidade?: number;
   idArquivo?: number;
@@ -112,6 +143,17 @@ export interface UpdatePedidoRepositoryDTO {
   tempoExecFarmHoras?: number | null;
 }
 
+export type UpdatePedidoResult =
+  | "updated"
+  | "not_found"
+  | "execution_active"
+  | "status_forbidden";
+export type DeletePedidoResult =
+  | "deleted"
+  | "not_found"
+  | "status_blocked"
+  | "execution_active";
+
 function toNumber(value: unknown): number {
   return Number(value);
 }
@@ -120,20 +162,42 @@ function toBoolean(value: unknown): boolean {
   return value === true || value === 1 || value === "1" || value === "true";
 }
 
-function toNullableNumber(value: unknown): number | null {
+/** `NULL`/`undefined` viram `null`, nunca `0` — ao contrário de `Number(null) === 0`. */
+export function toNullableNumber(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
 }
 
-function mapPedidoOtimizacao(row: any): PedidoOtimizacaoRow {
+/** Candidato à otimização ainda não validado: qualquer campo temporal pode estar ausente. */
+type CandidatoOtimizacao = DadosBaseTemporal & {
+  id: number;
+  idMaterial: number;
+  criadoEm: Date;
+  prioridadePaga: boolean;
+  dimensaoXMm: number | null;
+  dimensaoYMm: number | null;
+  dimensaoZMm: number | null;
+};
+
+function mapCandidatoOtimizacao(row: any): CandidatoOtimizacao {
   return {
     id: toNumber(row.id),
     idMaterial: toNumber(row.idMaterial),
-    tempoGcodeHoras: toNumber(row.tempoGcodeHoras),
-    prazoEntregaHoras: toNumber(row.prazoEntregaHoras),
-    tempoMaximoEsperaHoras: toNullableNumber(row.tempoMaximoEsperaHoras),
+    tempoGcodeHoras: toNullableNumber(row.tempoGcodeHoras),
+    tempoExecFarmHoras: toNullableNumber(row.tempoExecFarmHoras),
+    etaHorasEstimado: toNullableNumber(row.etaHorasEstimado),
+    etaCalculadoEm: row.etaCalculadoEm ?? null,
+    prazoEntregaHoras: toNullableNumber(row.prazoEntregaHoras),
+    prazoEntrega: row.prazoEntrega ?? null,
+    prazoEntregaOriginal: row.prazoEntregaOriginal ?? null,
     limiteInicioImpressao: row.limiteInicioImpressao ?? null,
+    tempoMaximoEsperaHoras: toNullableNumber(row.tempoMaximoEsperaHoras),
+    bufferPrioridadeHoras: toNullableNumber(row.bufferPrioridadeHoras),
+    bufferSegurancaHoras: toNullableNumber(row.bufferSegurancaHoras),
     criadoEm: row.criadoEm,
     prioridadePaga: toBoolean(row.prioridadePaga),
+    dimensaoXMm: toNullableNumber(row.dimensaoXMm),
+    dimensaoYMm: toNullableNumber(row.dimensaoYMm),
+    dimensaoZMm: toNullableNumber(row.dimensaoZMm),
   };
 }
 
@@ -151,6 +215,8 @@ const SEL = `
     p.material_gramas   AS materialGramas,
     p.score_complexidade  AS scoreComplexidade,
     p.motivo_complexidade AS motivoComplexidade,
+    p.motivo_falha        AS motivoFalha,
+    p.motivo_cancelamento AS motivoCancelamento,
     p.preco_base        AS precoBase,
     p.taxa_complexidade AS taxaComplexidade,
     p.taxa_stripe       AS taxaStripe,
@@ -166,6 +232,11 @@ const SEL = `
     p.buffer_prioridade_horas AS bufferPrioridadeHoras,
     p.buffer_seguranca_horas AS bufferSegurancaHoras,
     p.tempo_exec_farm_horas AS tempoExecFarmHoras,
+    p.dimensao_x_mm AS dimensaoXMm,
+    p.dimensao_y_mm AS dimensaoYMm,
+    p.dimensao_z_mm AS dimensaoZMm,
+    (SELECT COUNT(*) FROM jobs_impressao ji
+      WHERE ji.id_pedido = p.id AND ji.status = 'concluido') AS unidadesConcluidas,
     DATE_FORMAT(p.created_at, '%Y-%m-%dT%H:%i:%sZ') AS createdAt,
     DATE_FORMAT(p.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updatedAt,
     u.nome   AS nomeUsuario,
@@ -199,34 +270,64 @@ export class PedidoRepository {
     return ((rows as any[])[0] ?? null);
   }
 
+  /**
+   * Pedidos elegíveis para a heurística de fila. Devolve datas absolutas
+   * (não horas corridas já subtraídas em SQL) — a conversão para horas
+   * operacionais restantes é responsabilidade de quem consome esta lista
+   * (`FilaService`, via `calcularHorasOperacionaisEntre`), pois só assim a
+   * fila usa a mesma definição de jornada que o `EtaEntregaService`.
+   *
+   * Nenhum pedido sem base temporal válida é devolvido: a heurística não
+   * pode inventar um prazo/ETA para um registro incompleto. Um pedido em
+   * `na_fila` sem base temporal é um estado inconsistente (não deveria
+   * acontecer, dado que todos os caminhos para `na_fila` validam antes) —
+   * quando ocorre, é ignorado aqui e registrado no log em vez de afetar o
+   * escalonamento.
+   */
   async findPendentesParaOtimizacao(): Promise<PedidoOtimizacaoRow[]> {
     const [rows] = await db.execute(`
       SELECT
-        id,
-        id_material AS idMaterial,
-        tempo_gcode_horas AS tempoGcodeHoras,
-        CASE
-          WHEN prazo_entrega IS NOT NULL
-            THEN TIMESTAMPDIFF(MINUTE, NOW(), prazo_entrega) / 60
-          ELSE prazo_entrega_horas
-        END AS prazoEntregaHoras,
-        CASE
-          WHEN limite_inicio_impressao IS NOT NULL
-            THEN TIMESTAMPDIFF(MINUTE, NOW(), limite_inicio_impressao) / 60
-          WHEN tempo_maximo_espera_horas IS NOT NULL
-            THEN tempo_maximo_espera_horas - TIMESTAMPDIFF(MINUTE, created_at, NOW()) / 60
-          ELSE NULL
-        END AS tempoMaximoEsperaHoras,
-        DATE_FORMAT(limite_inicio_impressao, '%Y-%m-%d %H:%i:%s') AS limiteInicioImpressao,
-        created_at AS criadoEm,
-        prioridade_paga AS prioridadePaga
-      FROM pedidos
-      WHERE status = 'na_fila'
-      ORDER BY created_at ASC, id ASC
-      LIMIT 100
+        p.id,
+        p.id_material AS idMaterial,
+        p.tempo_gcode_horas AS tempoGcodeHoras,
+        p.tempo_exec_farm_horas AS tempoExecFarmHoras,
+        p.dimensao_x_mm AS dimensaoXMm,
+        p.dimensao_y_mm AS dimensaoYMm,
+        p.dimensao_z_mm AS dimensaoZMm,
+        p.eta_horas_estimado AS etaHorasEstimado,
+        DATE_FORMAT(p.eta_calculado_em, '%Y-%m-%d %H:%i:%s') AS etaCalculadoEm,
+        p.prazo_entrega_horas AS prazoEntregaHoras,
+        DATE_FORMAT(p.prazo_entrega, '%Y-%m-%d %H:%i:%s') AS prazoEntrega,
+        DATE_FORMAT(p.prazo_entrega_original, '%Y-%m-%d %H:%i:%s') AS prazoEntregaOriginal,
+        DATE_FORMAT(p.limite_inicio_impressao, '%Y-%m-%d %H:%i:%s') AS limiteInicioImpressao,
+        p.tempo_maximo_espera_horas AS tempoMaximoEsperaHoras,
+        p.buffer_prioridade_horas AS bufferPrioridadeHoras,
+        p.buffer_seguranca_horas AS bufferSegurancaHoras,
+        p.created_at AS criadoEm,
+        p.prioridade_paga AS prioridadePaga
+      FROM pedidos p
+      WHERE p.status = 'na_fila'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pedido_impressora pi
+          WHERE pi.id_pedido = p.id
+            AND pi.status IN ('reservado', 'em_impressao')
+        )
+      ORDER BY p.created_at ASC, p.id ASC
     `);
 
-    return (rows as any[]).map(mapPedidoOtimizacao);
+    const validos: PedidoOtimizacaoRow[] = [];
+    for (const candidato of (rows as any[]).map(mapCandidatoOtimizacao)) {
+      if (!pedidoEstaProntoParaFila(candidato)) {
+        console.error(
+          `[PedidoRepository] Pedido ${candidato.id} está em 'na_fila' sem base temporal ` +
+            "válida; ignorado no planejamento da fila.",
+        );
+        continue;
+      }
+      validos.push(candidato as PedidoOtimizacaoRow);
+    }
+    return validos;
   }
 
   async create(data: CreatePedidoRepositoryDTO): Promise<number> {
@@ -267,13 +368,14 @@ export class PedidoRepository {
     return result.insertId;
   }
 
-  async update(id: number, data: UpdatePedidoRepositoryDTO): Promise<void> {
+  async update(id: number, data: UpdatePedidoRepositoryDTO): Promise<UpdatePedidoResult> {
+    if (data.status !== undefined) return "status_forbidden";
     const campos: string[] = [];
     const vals: any[]      = [];
 
     if (data.preco       !== undefined) { campos.push("preco = ?");        vals.push(data.preco); }
     if (data.descricao   !== undefined) { campos.push("descricao = ?");    vals.push(data.descricao); }
-    if (data.status      !== undefined) { campos.push("status = ?");       vals.push(data.status); }
+    if (data.motivoCancelamento !== undefined) { campos.push("motivo_cancelamento = ?"); vals.push(data.motivoCancelamento); }
     if (data.idMaterial  !== undefined) { campos.push("id_material = ?");  vals.push(data.idMaterial); }
     if (data.idQualidade !== undefined) { campos.push("id_qualidade = ?"); vals.push(data.idQualidade); }
     if (data.idArquivo   !== undefined) { campos.push("id_arquivo = ?");   vals.push(data.idArquivo); }
@@ -295,12 +397,130 @@ export class PedidoRepository {
     if (data.bufferSegurancaHoras !== undefined) { campos.push("buffer_seguranca_horas = ?"); vals.push(data.bufferSegurancaHoras); }
     if (data.tempoExecFarmHoras !== undefined) { campos.push("tempo_exec_farm_horas = ?"); vals.push(data.tempoExecFarmHoras); }
 
-    if (campos.length === 0) return;
-    vals.push(id);
-    await db.execute(`UPDATE pedidos SET ${campos.join(", ")} WHERE id = ?`, vals);
+    if (campos.length === 0) return "updated";
+
+    const connection = await db.getConnection();
+    let transactionStarted = false;
+    try {
+      await connection.beginTransaction();
+      transactionStarted = true;
+      const [pedidoRows] = await connection.execute(
+        "SELECT id FROM pedidos WHERE id = ? FOR UPDATE",
+        [id],
+      );
+      if ((pedidoRows as any[]).length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "not_found";
+      }
+
+      const alteraEntradaFisica =
+        data.idMaterial !== undefined ||
+        data.idQualidade !== undefined ||
+        data.idArquivo !== undefined;
+      if (alteraEntradaFisica) {
+        const [activeRows] = await connection.execute(
+          `SELECT id
+           FROM pedido_impressora
+           WHERE id_pedido = ? AND status IN ('reservado', 'em_impressao')
+           LIMIT 1
+           FOR UPDATE`,
+          [id],
+        );
+        if ((activeRows as any[]).length > 0) {
+          await connection.rollback();
+          transactionStarted = false;
+          return "execution_active";
+        }
+      }
+
+      vals.push(id);
+      const [result]: any = await connection.execute(
+        `UPDATE pedidos SET ${campos.join(", ")} WHERE id = ?`,
+        vals,
+      );
+      if (Number(result.affectedRows) !== 1) {
+        throw new Error("O pedido mudou durante a atualização.");
+      }
+      await connection.commit();
+      transactionStarted = false;
+      return "updated";
+    } catch (error) {
+      if (transactionStarted) await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 
-  async delete(id: number): Promise<void> {
-    await db.execute("DELETE FROM pedidos WHERE id = ?", [id]);
+  async delete(id: number): Promise<DeletePedidoResult> {
+    const connection = await db.getConnection();
+    let transactionStarted = false;
+    try {
+      await connection.beginTransaction();
+      transactionStarted = true;
+      const [pedidoRows] = await connection.execute(
+        "SELECT status FROM pedidos WHERE id = ? FOR UPDATE",
+        [id],
+      );
+      const pedido = (pedidoRows as any[])[0];
+      if (!pedido) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "not_found";
+      }
+      if (["na_fila", "em_impressao", "concluido"].includes(String(pedido.status))) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "status_blocked";
+      }
+
+      const [allocationRows] = await connection.execute(
+        `SELECT id
+         FROM pedido_impressora
+         WHERE id_pedido = ?
+           AND status IN ('na_fila', 'reservado', 'aguardando_filamento', 'em_impressao')
+         LIMIT 1
+         FOR UPDATE`,
+        [id],
+      );
+      const [printerRows] = await connection.execute(
+        `SELECT id
+         FROM impressoras
+         WHERE id_pedido_atual = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [id],
+      );
+      if ((allocationRows as any[]).length > 0 || (printerRows as any[]).length > 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return "execution_active";
+      }
+
+      // id_pedido em pedido_impressora usa ON DELETE RESTRICT (não CASCADE — é
+      // coluna-base da gerada id_pedido_ativo), então o histórico de planejamento
+      // precisa ser removido explicitamente antes do pedido.
+      await connection.execute(
+        "DELETE FROM pedido_impressora WHERE id_pedido = ?",
+        [id],
+      );
+
+      const [result]: any = await connection.execute(
+        "DELETE FROM pedidos WHERE id = ?",
+        [id],
+      );
+      if (Number(result.affectedRows) !== 1) {
+        throw new Error("O pedido mudou durante a remoção.");
+      }
+      await connection.commit();
+      transactionStarted = false;
+      return "deleted";
+    } catch (error) {
+      if (transactionStarted) await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 }

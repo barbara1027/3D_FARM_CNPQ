@@ -16,10 +16,11 @@ import SyncIcon from '@mui/icons-material/Sync';
 import SettingsIcon from '@mui/icons-material/Settings';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import CheckBoxIcon from '@mui/icons-material/CheckBox';
 import LayersIcon from '@mui/icons-material/Layers';
 import api from '../../services/api';
-import { type Impressora, type ApiProtocol, type PrinterStatus } from '../../types/Impressora';
+import { type Impressora, type ApiProtocol, type PrinterStatus, type SlotFilamento } from '../../types/Impressora';
 import { type Pedido } from '../../types/Pedido';
 import { type Material } from '../../types/Material';
 import { normalizePedido } from '../../utils/normalize';
@@ -36,14 +37,22 @@ function formatRestante(s: number): string {
   return m < 60 ? `~${m}min` : `~${Math.floor(m / 60)}h ${m % 60}min`;
 }
 
-type FormData = Omit<Impressora, 'id' | 'statusFisico' | 'jobRemotoId' | 'ultimoErro' | 'ultimaSincronizacao' | 'idPedidoAtual'> & { id?: number };
+type FormData = Omit<Impressora, 'id' | 'statusFisico' | 'jobRemotoId' | 'ultimoErro' | 'ultimaSincronizacao' | 'idPedidoAtual' | 'filamentosCarregados'> & { id?: number };
 
 const emptyForm: FormData = {
   nome: '', modelo: '', status: 'Ociosa',
   ip: null, baseUrl: null, api: 'DUMMY', api_key: null,
-  timeoutMs: 15000, idMaterial: null,
+  timeoutMs: 15000, possuiCfs: false, larguraMesaMm: 220, profundidadeMesaMm: 220,
   eficiencia: 1, taxaErroRecente: 0, tempoParaFicarLivreHoras: 0, capacidadeDiaHoras: 8,
 };
+
+// A impressora não expõe um `idMaterial` plano — o material carregado vive
+// em `filamentosCarregados` (um item por slot). Este card só gerencia o
+// slot 1 (o único que impressoras sem CFS podem usar); em impressoras com
+// CFS de 4 slots, os demais continuam geridos via API.
+function slot1Material(imp: Impressora | null | undefined): SlotFilamento | null {
+  return imp?.filamentosCarregados.find(s => s.numeroSlot === 1) ?? null;
+}
 
 function borderColor(s: PrinterStatus): string {
   if (s === 'Ociosa')     return '#4caf50';
@@ -66,6 +75,7 @@ export function AdminPrintersPage() {
   const [error, setError]               = useState<string | null>(null);
   const [manageOpen, setManageOpen]     = useState(false);
   const [progressoMap, setProgressoMap] = useState<Record<number, ProgressoData>>({});
+  const [pedidosPorId, setPedidosPorId] = useState<Record<number, Pedido>>({});
 
   // Menu de troca de material
   const [materialMenuAnchor, setMaterialMenuAnchor] = useState<HTMLElement | null>(null);
@@ -85,8 +95,19 @@ export function AdminPrintersPage() {
 
   const fetchImpressoras = () => {
     setLoading(true);
-    api.get<Impressora[]>('/impressoras')
-      .then(r => setImpressoras(r.data))
+    Promise.all([
+      api.get<Impressora[]>('/impressoras'),
+      api.get<any[]>('/pedidos'),
+    ])
+      .then(([impRes, pedRes]) => {
+        setImpressoras(impRes.data);
+        const mapa: Record<number, Pedido> = {};
+        pedRes.data.forEach(raw => {
+          const p = normalizePedido(raw);
+          if (p) mapa[p.id] = p;
+        });
+        setPedidosPorId(mapa);
+      })
       .catch(() => setError('Erro ao buscar impressoras.'))
       .finally(() => setLoading(false));
   };
@@ -114,6 +135,22 @@ export function AdminPrintersPage() {
   const nomeMaterial = (idMaterial: number | null): string =>
     idMaterial == null ? 'Sem material' : materiais.find(m => m.id === idMaterial)?.nome ?? `#${idMaterial}`;
 
+  // Slot 1 é o único que impressoras sem CFS podem usar — é o slot exibido
+  // no chip do card. Impressoras com CFS podem carregar mais até 4 slots,
+  // mas a troca rápida pelo card segue restrita ao slot 1.
+  const idMaterialSlot1 = (imp: Impressora | null): number | null => slot1Material(imp)?.material.id ?? null;
+
+  // Nome do pedido em vez do número puro, com a quantidade em destaque
+  // (evita o admin confundir "1 pedido" com "1 peça" quando quantidade > 1).
+  const rotuloPedido = (idPedido: number): string => {
+    const pedido = pedidosPorId[idPedido];
+    if (!pedido) return `Pedido #${idPedido}`;
+    if (pedido.quantidade <= 1) return pedido.nome;
+    // Imprime uma cópia de cada vez (jobs_impressao) — mostra qual unidade
+    // está saindo agora.
+    return `${pedido.nome} (${pedido.unidadesConcluidas + 1}/${pedido.quantidade})`;
+  };
+
   const abrirMenuMaterial = (e: React.MouseEvent<HTMLElement>, imp: Impressora) => {
     e.stopPropagation();
     setMaterialMenuAnchor(e.currentTarget);
@@ -129,7 +166,15 @@ export function AdminPrintersPage() {
     if (!materialMenuImp) return;
     setTrocandoMaterial(true);
     try {
-      await api.put(`/impressoras/${materialMenuImp.id}`, { idMaterial });
+      // O material carregado se gerencia pelo endpoint de slots, não por
+      // PUT /impressoras/:id — esse endpoint não tem (nem nunca teve) um
+      // campo idMaterial no seu contrato, então a chamada antiga sempre
+      // retornava 200 sem persistir nada.
+      if (idMaterial == null) {
+        await api.delete(`/impressoras/${materialMenuImp.id}/slots/1`);
+      } else {
+        await api.put(`/impressoras/${materialMenuImp.id}/slots/1`, { idMaterial });
+      }
       fetchImpressoras();
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Erro ao trocar material.');
@@ -149,13 +194,18 @@ export function AdminPrintersPage() {
 
   const openAdd  = () => { setForm(emptyForm); setError(null); setFormOpen(true); };
   const openEdit = (imp: Impressora) => {
-    const { statusFisico: _sf, jobRemotoId: _jr, ultimoErro: _ue, ultimaSincronizacao: _us, idPedidoAtual: _ip, ...rest } = imp;
+    const {
+      statusFisico: _sf, jobRemotoId: _jr, ultimoErro: _ue, ultimaSincronizacao: _us,
+      idPedidoAtual: _ip, filamentosCarregados: _fc, ...rest
+    } = imp;
     setForm(rest); setError(null); setFormOpen(true);
   };
 
+  const NUMERIC_FIELDS = new Set(['timeoutMs', 'larguraMesaMm', 'profundidadeMesaMm']);
+
   const handleField = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setForm(p => ({ ...p, [name]: value === '' ? null : name === 'timeoutMs' ? Number(value) : value }));
+    setForm(p => ({ ...p, [name]: value === '' ? null : NUMERIC_FIELDS.has(name) ? Number(value) : value }));
   };
 
   const handleSave = async () => {
@@ -192,6 +242,13 @@ export function AdminPrintersPage() {
     try {
       await api.post(`/impressoras/${id}/liberar`); fetchImpressoras();
     } catch (err: any) { setError(err.response?.data?.message ?? 'Erro ao liberar.'); }
+  };
+
+  const handleParar = async (id: number) => {
+    if (!window.confirm('Parar esta impressão? O pedido volta para a fila e será atribuído automaticamente a outra impressora disponível.')) return;
+    try {
+      await api.post(`/impressoras/${id}/parar`); fetchImpressoras();
+    } catch (err: any) { setError(err.response?.data?.message ?? 'Erro ao parar impressão.'); }
   };
 
   const handleConfirmarRemocao = async (id: number) => {
@@ -280,13 +337,13 @@ export function AdminPrintersPage() {
                 </Typography>
                 <Typography variant="body2" color="text.secondary">{imp.modelo}</Typography>
               </Box>
-              <Tooltip title="Clique para trocar o material carregado">
+              <Tooltip title="Clique para trocar o material carregado no slot 1">
                 <Chip
                   icon={<LayersIcon fontSize="small" />}
-                  label={nomeMaterial(imp.idMaterial)}
+                  label={nomeMaterial(idMaterialSlot1(imp))}
                   size="small"
-                  variant={imp.idMaterial == null ? 'outlined' : 'filled'}
-                  color={imp.idMaterial == null ? 'default' : 'primary'}
+                  variant={idMaterialSlot1(imp) == null ? 'outlined' : 'filled'}
+                  color={idMaterialSlot1(imp) == null ? 'default' : 'primary'}
                   onClick={(e) => abrirMenuMaterial(e, imp)}
                   sx={{ cursor: 'pointer', flexShrink: 0 }}
                 />
@@ -310,7 +367,7 @@ export function AdminPrintersPage() {
                 <Box>
                   <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
                     <Typography variant="caption" color="text.secondary">
-                      {nivelando ? 'Nivelando mesa...' : imp.idPedidoAtual ? `Pedido #${imp.idPedidoAtual}` : 'Imprimindo'}
+                      {nivelando ? 'Nivelando mesa...' : imp.idPedidoAtual ? rotuloPedido(imp.idPedidoAtual) : 'Imprimindo'}
                     </Typography>
                     <Box display="flex" gap={1} alignItems="center">
                       {restante != null && restante > 0 && (
@@ -360,7 +417,7 @@ export function AdminPrintersPage() {
             {/* Pedido atual (quando não está imprimindo) */}
             {imp.status !== 'Imprimindo' && imp.idPedidoAtual && (
               <Typography variant="caption" color="text.secondary">
-                Pedido #{imp.idPedidoAtual}
+                {rotuloPedido(imp.idPedidoAtual)}
               </Typography>
             )}
 
@@ -394,6 +451,15 @@ export function AdminPrintersPage() {
                   >
                     Concluir
                   </Button>
+                  <Tooltip title="Parar impressão (falha detectada) e devolver pedido para a fila">
+                    <Button
+                      variant="outlined" color="error" fullWidth size="small"
+                      startIcon={<ErrorOutlineIcon />}
+                      onClick={() => handleParar(imp.id)}
+                    >
+                      Parar
+                    </Button>
+                  </Tooltip>
                 </>
               )}
               {imp.status === 'Aguardando Remoção' && (
@@ -475,10 +541,35 @@ export function AdminPrintersPage() {
           />
           <TextField name="api_key"  label="API Key"      fullWidth value={form.api_key  ?? ''} onChange={handleField} />
           <TextField name="timeoutMs" label="Timeout (ms)" type="number" fullWidth value={form.timeoutMs} onChange={handleField} />
+          <FormControl fullWidth>
+            <InputLabel shrink>Possui CFS (torre multi-material)</InputLabel>
+            <Select
+              label="Possui CFS (torre multi-material)"
+              notched
+              value={form.possuiCfs ? '1' : '0'}
+              onChange={(e: SelectChangeEvent) => setForm(p => ({ ...p, possuiCfs: e.target.value === '1' }))}
+            >
+              <MenuItem value="0">Não (só slot 1)</MenuItem>
+              <MenuItem value="1">Sim (slots 1 a 4)</MenuItem>
+            </Select>
+          </FormControl>
+          <Box display="flex" gap={2}>
+            <TextField
+              name="larguraMesaMm" label="Largura da mesa (mm) *" type="number" required fullWidth
+              value={form.larguraMesaMm} onChange={handleField}
+            />
+            <TextField
+              name="profundidadeMesaMm" label="Profundidade da mesa (mm) *" type="number" required fullWidth
+              value={form.profundidadeMesaMm} onChange={handleField}
+            />
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setFormOpen(false)} disabled={saving}>Cancelar</Button>
-          <Button onClick={handleSave} variant="contained" disabled={saving || !form.nome || !form.modelo}>
+          <Button
+            onClick={handleSave} variant="contained"
+            disabled={saving || !form.nome || !form.modelo || !(form.larguraMesaMm > 0) || !(form.profundidadeMesaMm > 0)}
+          >
             {saving ? <CircularProgress size={22} /> : 'Salvar'}
           </Button>
         </DialogActions>
@@ -498,7 +589,7 @@ export function AdminPrintersPage() {
           <MenuItem
             key={m.id}
             disabled={trocandoMaterial}
-            selected={materialMenuImp?.idMaterial === m.id}
+            selected={idMaterialSlot1(materialMenuImp) === m.id}
             onClick={() => handleTrocarMaterial(m.id)}
           >
             {m.nome} ({m.tipo})

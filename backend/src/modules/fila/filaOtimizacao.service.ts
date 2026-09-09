@@ -7,21 +7,43 @@ export interface PedidoOtimizacao {
   limiteInicioImpressao?: string | Date | null;
   criadoEm: string | Date;
   prioridadePaga: boolean;
+  // Bounding box da peça (Fase 7), em mm. Opcional/nulo quando desconhecida
+  // — nesse caso a checagem de compatibilidade com a mesa (Fase 20) não filtra.
+  dimensaoXMm?: number | null;
+  dimensaoYMm?: number | null;
+  dimensaoZMm?: number | null;
+}
+
+export interface SlotFilamentoOtimizacao {
+  numeroSlot: number;
+  idMaterial: number;
 }
 
 export interface ImpressoraOtimizacao {
   id: number;
   idMaterialAtual: number | null;
+  possuiCfs?: boolean;
+  slots?: SlotFilamentoOtimizacao[];
   eficiencia: number;
   taxaErroRecente: number;
   tempoParaFicarLivreHoras: number;
   capacidadeDiaHoras: number;
+  horasUsadasHoje?: number;
+  // Mesa física (Fase 20), em mm. Opcional/nula quando desconhecida — nesse
+  // caso a impressora nunca é descartada por incompatibilidade de tamanho.
+  larguraMesaMm?: number | null;
+  profundidadeMesaMm?: number | null;
 }
+
+export type StatusInicialAlocacao = "na_fila" | "aguardando_filamento";
 
 export interface AlocacaoPlanejada {
   idPedido: number;
   idImpressora: number;
   posicaoFila: number;
+  numeroSlotPlanejado: number | null;
+  requerTrocaManual: boolean;
+  statusInicial: StatusInicialAlocacao;
   inicioPrevistoHoras: number;
   conclusaoPrevistaHoras: number;
   custo: number;
@@ -46,15 +68,28 @@ export interface OpcoesSimulacaoFila {
 
 export const ALPHA_SETUP = 1;
 export const BETA_RISCO = 1;
+export const PESO_ATRASO_PRIORIDADE_PAGA = 2;
 
 const EPSILON_HORAS = 0.0001;
 
-interface EstadoImpressora extends ImpressoraOtimizacao {
+// Mantem as duracoes manuais historicamente usadas pela heuristica. Quando o
+// material ja esta em um slot elegivel, nenhum desses tempos e aplicado: a
+// troca automatica do CFS nao recebe uma duracao inventada.
+const SETUP_MANUAL_CARREGAR_SLOT_VAZIO_HORAS = 0.25;
+const SETUP_MANUAL_TROCAR_FILAMENTO_HORAS = 0.5;
+
+type EstadoImpressora = Omit<ImpressoraOtimizacao, "possuiCfs" | "slots"> & {
+  possuiCfs: boolean;
+  slots: SlotFilamentoOtimizacao[];
   proximaPosicaoFila: number;
-}
+  limitePlanejamentoHoras: number;
+};
 
 interface CandidatoAlocacao {
   impressora: EstadoImpressora;
+  numeroSlotPlanejado: number | null;
+  requerTrocaManual: boolean;
+  statusInicial: StatusInicialAlocacao;
   inicioPrevistoHoras: number;
   conclusaoPrevistaHoras: number;
   setup: number;
@@ -128,19 +163,17 @@ export class FilaOtimizacaoService {
       }
 
       let posicaoAtual = indice;
-      const idsPedidosUltrapassados: number[] = [];
 
       while (posicaoAtual > 0 && !sequencia[posicaoAtual - 1].prioridadePaga) {
         const pedidoUltrapassado = sequencia[posicaoAtual - 1];
-        const idsAfetados = [...idsPedidosUltrapassados, pedidoUltrapassado.id];
         const candidata = [...sequencia];
         candidata[posicaoAtual - 1] = sequencia[posicaoAtual];
         candidata[posicaoAtual] = pedidoUltrapassado;
 
         if (
           !this.ultrapassagemViavel(
+            sequencia,
             candidata,
-            idsAfetados,
             impressoras,
             horasOperadorDisponiveis,
           )
@@ -149,7 +182,6 @@ export class FilaOtimizacaoService {
         }
 
         sequencia = candidata;
-        idsPedidosUltrapassados.push(pedidoUltrapassado.id);
         posicaoAtual -= 1;
       }
     }
@@ -188,6 +220,9 @@ export class FilaOtimizacaoService {
         idPedido: pedido.id,
         idImpressora: impressora.id,
         posicaoFila,
+        numeroSlotPlanejado: melhorCandidato.numeroSlotPlanejado,
+        requerTrocaManual: melhorCandidato.requerTrocaManual,
+        statusInicial: melhorCandidato.statusInicial,
         inicioPrevistoHoras: melhorCandidato.inicioPrevistoHoras,
         conclusaoPrevistaHoras: melhorCandidato.conclusaoPrevistaHoras,
         custo: melhorCandidato.custo,
@@ -199,10 +234,12 @@ export class FilaOtimizacaoService {
         violouTempoMaximoEspera: melhorCandidato.violouTempoMaximoEspera,
       });
 
-      impressora.tempoParaFicarLivreHoras = melhorCandidato.conclusaoPrevistaHoras;
-      impressora.idMaterialAtual = pedido.idMaterial;
       impressora.proximaPosicaoFila += 1;
-      horasOperadorRestantes -= melhorCandidato.setup;
+      if (melhorCandidato.statusInicial === "na_fila") {
+        impressora.tempoParaFicarLivreHoras = melhorCandidato.conclusaoPrevistaHoras;
+        impressora.idMaterialAtual = pedido.idMaterial;
+        horasOperadorRestantes = Math.max(0, horasOperadorRestantes - melhorCandidato.setup);
+      }
     }
 
     return {
@@ -213,41 +250,80 @@ export class FilaOtimizacaoService {
   }
 
   private ultrapassagemViavel(
+    sequenciaAtual: PedidoOtimizacao[],
     sequenciaCandidata: PedidoOtimizacao[],
-    _idsPedidosUltrapassados: number[],
     impressoras: ImpressoraOtimizacao[],
     horasOperadorDisponiveis: number,
   ): boolean {
-    const resultado = this.simularFilasDiarias(
+    const opcoesSemNovasUltrapassagens = {
+      preservarOrdem: true,
+      aplicarUltrapassagensCondicionadas: false,
+    } as const;
+    const resultadoAtual = this.simularFilasDiarias(
+      sequenciaAtual,
+      impressoras,
+      horasOperadorDisponiveis,
+      opcoesSemNovasUltrapassagens,
+    );
+    const resultadoCandidato = this.simularFilasDiarias(
       sequenciaCandidata,
       impressoras,
       horasOperadorDisponiveis,
-      {
-        preservarOrdem: true,
-        aplicarUltrapassagensCondicionadas: false,
-      },
+      opcoesSemNovasUltrapassagens,
     );
 
-    // Regra conservadora: uma troca de prioridade so e aceita se nenhum pedido
-    // normal da simulacao passar a violar seu limite de inicio ou seu prazo.
-    const pedidosNormais = sequenciaCandidata.filter((pedido) => !pedido.prioridadePaga);
+    const alocacoesAtuais = new Map(
+      resultadoAtual.alocacoes.map((alocacao) => [alocacao.idPedido, alocacao]),
+    );
+    const alocacoesCandidatas = new Map(
+      resultadoCandidato.alocacoes.map((alocacao) => [alocacao.idPedido, alocacao]),
+    );
 
-    for (const pedido of pedidosNormais) {
-      const alocacao = resultado.alocacoes.find((item) => item.idPedido === pedido.id);
+    // A preferencia paga nunca pode criar uma violacao temporal que nao existia
+    // no plano imediatamente anterior. Em sobrecarga, uma violacao que ja era
+    // inevitavel pode permanecer, mas passa a ser decidida pelo atraso ponderado.
+    for (const pedido of sequenciaAtual) {
+      const alocacaoAtual = alocacoesAtuais.get(pedido.id);
+      const alocacaoCandidata = alocacoesCandidatas.get(pedido.id);
 
-      if (!alocacao) {
+      if (alocacaoAtual && !alocacaoCandidata) {
         return false;
       }
+      if (!alocacaoAtual || !alocacaoCandidata) continue;
 
       if (
-        this.alocacaoViolaTempoMaximoEspera(alocacao, pedido) ||
-        this.alocacaoViolaPrazo(alocacao, pedido)
+        (!this.alocacaoViolaTempoMaximoEspera(alocacaoAtual, pedido) &&
+          this.alocacaoViolaTempoMaximoEspera(alocacaoCandidata, pedido)) ||
+        (!this.alocacaoViolaPrazo(alocacaoAtual, pedido) &&
+          this.alocacaoViolaPrazo(alocacaoCandidata, pedido))
       ) {
         return false;
       }
     }
 
-    return true;
+    const haSobrecargaAtual = sequenciaAtual.some((pedido) => {
+      const alocacao = alocacoesAtuais.get(pedido.id);
+      return (
+        !alocacao ||
+        this.alocacaoViolaTempoMaximoEspera(alocacao, pedido) ||
+        this.alocacaoViolaPrazo(alocacao, pedido)
+      );
+    });
+
+    if (!haSobrecargaAtual) return true;
+
+    if (alocacoesCandidatas.size > alocacoesAtuais.size) return true;
+
+    const atrasoAtual = this.calcularAtrasoPonderado(resultadoAtual, sequenciaAtual);
+    const atrasoCandidato = this.calcularAtrasoPonderado(
+      resultadoCandidato,
+      sequenciaCandidata,
+    );
+
+    return (
+      Number.isFinite(atrasoCandidato) &&
+      atrasoCandidato - atrasoAtual <= EPSILON_HORAS
+    );
   }
 
   private encontrarMelhorCandidato(
@@ -264,11 +340,17 @@ export class FilaOtimizacaoService {
         continue;
       }
 
-      if (candidato.conclusaoPrevistaHoras > impressora.capacidadeDiaHoras) {
+      if (
+        candidato.statusInicial === "na_fila" &&
+        candidato.conclusaoPrevistaHoras > impressora.limitePlanejamentoHoras
+      ) {
         continue;
       }
 
-      if (candidato.setup > horasOperadorRestantes) {
+      if (
+        candidato.statusInicial === "na_fila" &&
+        candidato.setup > horasOperadorRestantes
+      ) {
         continue;
       }
 
@@ -287,10 +369,14 @@ export class FilaOtimizacaoService {
     if (impressora.eficiencia <= 0) {
       return null;
     }
+    if (!this.cabeNaMesa(pedido, impressora)) {
+      return null;
+    }
 
     const taxaErro = this.normalizarTaxaErro(impressora.taxaErroRecente);
     const tempoReal = pedido.tempoGcodeHoras / impressora.eficiencia;
-    const setup = this.calcularSetup(pedido.idMaterial, impressora.idMaterialAtual);
+    const material = this.resolverMaterialPlanejado(pedido.idMaterial, impressora);
+    const setup = material.setupManualHoras;
     const tempoBase = tempoReal + setup;
     const tempoTotal = tempoBase / (1 - taxaErro);
     const riscoEsperado = tempoTotal - tempoBase;
@@ -302,10 +388,17 @@ export class FilaOtimizacaoService {
       { inicioPrevistoHoras },
       pedido,
     );
-    const custo = atrasoHoras + ALPHA_SETUP * setup + BETA_RISCO * riscoEsperado;
+    const pesoAtraso = pedido.prioridadePaga ? PESO_ATRASO_PRIORIDADE_PAGA : 1;
+    const custo =
+      pesoAtraso * atrasoHoras +
+      ALPHA_SETUP * setup +
+      BETA_RISCO * riscoEsperado;
 
     return {
       impressora,
+      numeroSlotPlanejado: material.numeroSlotPlanejado,
+      requerTrocaManual: material.requerTrocaManual,
+      statusInicial: material.statusInicial,
       inicioPrevistoHoras,
       conclusaoPrevistaHoras,
       setup,
@@ -318,16 +411,62 @@ export class FilaOtimizacaoService {
     };
   }
 
-  private calcularSetup(idMaterialPedido: number, idMaterialAtual: number | null): number {
-    if (idMaterialAtual === idMaterialPedido) {
-      return 0.15;
+  /**
+   * Fase 20: uma peça maior que a mesa nunca pode virar candidata, em nenhuma
+   * das duas orientações XY (rotação em Z é permitida; altura não gira).
+   * Quando a peça ou a mesa têm dimensão desconhecida, não filtra — a
+   * ausência de dado nunca é tratada como incompatibilidade.
+   */
+  private cabeNaMesa(pedido: PedidoOtimizacao, impressora: EstadoImpressora): boolean {
+    const largura = impressora.larguraMesaMm;
+    const profundidade = impressora.profundidadeMesaMm;
+    if (largura == null || profundidade == null || largura <= 0 || profundidade <= 0) {
+      return true;
     }
 
-    if (idMaterialAtual === null) {
-      return 0.25;
+    const x = pedido.dimensaoXMm;
+    const y = pedido.dimensaoYMm;
+    if (x == null || y == null || x <= 0 || y <= 0) {
+      return true;
     }
 
-    return 0.5;
+    const cabeSemGirar = x <= largura && y <= profundidade;
+    const cabeGirado = x <= profundidade && y <= largura;
+    return cabeSemGirar || cabeGirado;
+  }
+
+  private resolverMaterialPlanejado(
+    idMaterialPedido: number,
+    impressora: EstadoImpressora,
+  ): {
+    numeroSlotPlanejado: number | null;
+    requerTrocaManual: boolean;
+    statusInicial: StatusInicialAlocacao;
+    setupManualHoras: number;
+  } {
+    const slotEncontrado = impressora.slots.find(
+      (slot) => slot.idMaterial === idMaterialPedido,
+    );
+
+    if (slotEncontrado) {
+      return {
+        numeroSlotPlanejado: slotEncontrado.numeroSlot,
+        requerTrocaManual: false,
+        statusInicial: "na_fila",
+        setupManualHoras: 0,
+      };
+    }
+
+    return {
+      numeroSlotPlanejado: null,
+      requerTrocaManual: true,
+      statusInicial: "aguardando_filamento",
+      setupManualHoras:
+        new Set(impressora.slots.map((slot) => slot.numeroSlot)).size <
+        (impressora.possuiCfs ? 4 : 1)
+          ? SETUP_MANUAL_CARREGAR_SLOT_VAZIO_HORAS
+          : SETUP_MANUAL_TROCAR_FILAMENTO_HORAS,
+    };
   }
 
   private normalizarTimestamp(data: string | Date): number {
@@ -369,6 +508,13 @@ export class FilaOtimizacaoService {
   }
 
   private compararCandidatos(a: CandidatoAlocacao, b: CandidatoAlocacao): number {
+    // Um candidato executavel sempre precede uma alocacao que depende de uma
+    // intervencao sem data conhecida. A espera so e escolhida quando nenhuma
+    // impressora possui o material em um slot elegivel.
+    if (a.statusInicial !== b.statusInicial) {
+      return a.statusInicial === "na_fila" ? -1 : 1;
+    }
+
     if (a.violouTempoMaximoEspera !== b.violouTempoMaximoEspera) {
       return a.violouTempoMaximoEspera ? 1 : -1;
     }
@@ -381,11 +527,35 @@ export class FilaOtimizacaoService {
       return a.custo - b.custo;
     }
 
+    if (a.requerTrocaManual !== b.requerTrocaManual) {
+      return a.requerTrocaManual ? 1 : -1;
+    }
+
     if (a.conclusaoPrevistaHoras !== b.conclusaoPrevistaHoras) {
       return a.conclusaoPrevistaHoras - b.conclusaoPrevistaHoras;
     }
 
     return a.impressora.id - b.impressora.id;
+  }
+
+  private calcularAtrasoPonderado(
+    resultado: ResultadoSimulacaoFila,
+    pedidos: PedidoOtimizacao[],
+  ): number {
+    const alocacoes = new Map(
+      resultado.alocacoes.map((alocacao) => [alocacao.idPedido, alocacao]),
+    );
+    let total = 0;
+
+    for (const pedido of pedidos) {
+      const alocacao = alocacoes.get(pedido.id);
+      if (!alocacao) continue;
+      total +=
+        alocacao.atrasoHoras *
+        (pedido.prioridadePaga ? PESO_ATRASO_PRIORIDADE_PAGA : 1);
+    }
+
+    return total;
   }
 
   private calcularAtrasoHoras(conclusaoPrevistaHoras: number, pedido: PedidoOtimizacao): number {
@@ -448,17 +618,24 @@ export class FilaOtimizacaoService {
 
   private normalizarPedido(pedido: PedidoOtimizacao): PedidoOtimizacao | null {
     const tempoGcodeHoras = Number(pedido.tempoGcodeHoras);
+    // Sem fallback: um pedido sem prazoEntregaHoras válido não recebe um
+    // prazo inventado (24h ou qualquer outro). A verificação de
+    // Number.isFinite abaixo descarta silenciosamente o registro inválido —
+    // ele já deveria ter sido barrado antes de chegar em 'na_fila'.
     const normalizado: PedidoOtimizacao = {
       id: Number(pedido.id),
       idMaterial: Number(pedido.idMaterial),
       tempoGcodeHoras,
-      prazoEntregaHoras: this.normalizarNumero(pedido.prazoEntregaHoras, 24),
+      prazoEntregaHoras: Number(pedido.prazoEntregaHoras),
       tempoMaximoEsperaHoras: this.normalizarNumeroOpcional(
         pedido.tempoMaximoEsperaHoras,
       ),
       limiteInicioImpressao: pedido.limiteInicioImpressao ?? null,
       criadoEm: pedido.criadoEm,
       prioridadePaga: this.normalizarBooleano(pedido.prioridadePaga),
+      dimensaoXMm: this.normalizarNumeroOpcional(pedido.dimensaoXMm),
+      dimensaoYMm: this.normalizarNumeroOpcional(pedido.dimensaoYMm),
+      dimensaoZMm: this.normalizarNumeroOpcional(pedido.dimensaoZMm),
     };
 
     if (
@@ -480,9 +657,32 @@ export class FilaOtimizacaoService {
         ? null
         : Number(impressora.idMaterialAtual);
 
+    const possuiCfs = this.normalizarBooleano(impressora.possuiCfs);
+    const slotsOriginais = Array.isArray(impressora.slots)
+      ? impressora.slots
+      : idMaterialAtual === null
+        ? []
+        : [{ numeroSlot: 1, idMaterial: idMaterialAtual }];
+    const slots = slotsOriginais
+      .map((slot) => ({
+        numeroSlot: Number(slot.numeroSlot),
+        idMaterial: Number(slot.idMaterial),
+      }))
+      .filter(
+        (slot) =>
+          Number.isInteger(slot.numeroSlot) &&
+          slot.numeroSlot >= 1 &&
+          slot.numeroSlot <= 4 &&
+          Number.isFinite(slot.idMaterial) &&
+          (!possuiCfs ? slot.numeroSlot === 1 : true),
+      )
+      .sort((a, b) => a.numeroSlot - b.numeroSlot);
+
     const normalizada: EstadoImpressora = {
       id: Number(impressora.id),
       idMaterialAtual,
+      possuiCfs,
+      slots,
       eficiencia: this.normalizarNumeroPositivo(impressora.eficiencia, 1),
       taxaErroRecente: this.normalizarTaxaErro(impressora.taxaErroRecente),
       tempoParaFicarLivreHoras: Math.max(
@@ -490,7 +690,15 @@ export class FilaOtimizacaoService {
         this.normalizarNumero(impressora.tempoParaFicarLivreHoras, 0),
       ),
       capacidadeDiaHoras: this.normalizarNumeroPositivo(impressora.capacidadeDiaHoras, 8),
+      horasUsadasHoje: Math.max(0, this.normalizarNumero(impressora.horasUsadasHoje, 0)),
+      limitePlanejamentoHoras: Math.max(
+        0,
+        this.normalizarNumeroPositivo(impressora.capacidadeDiaHoras, 8) -
+          Math.max(0, this.normalizarNumero(impressora.horasUsadasHoje, 0)),
+      ),
       proximaPosicaoFila: 1,
+      larguraMesaMm: this.normalizarNumeroOpcional(impressora.larguraMesaMm),
+      profundidadeMesaMm: this.normalizarNumeroOpcional(impressora.profundidadeMesaMm),
     };
 
     if (

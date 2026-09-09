@@ -10,12 +10,33 @@ function parseOptionalNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function parseOptionalBoolean(value: unknown): boolean | undefined {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
+// Campos que o corpo da requisição pode conter mas que NUNCA são aceitos
+// aqui, para nenhum papel — preço, ETA, prazos, buffers, complexidade e
+// prioridade paga pertencem exclusivamente ao pipeline automático (Fase 1)
+// ou a um caminho administrativo dedicado (Fase 9/24/25).
+/**
+ * Constrói o payload de atualização a partir do corpo da requisição,
+ * filtrado pelo papel do usuário. Cliente comum só altera `descricao`
+ * (e `status` para cancelamento, validado depois pelo service). Admin
+ * também pode ajustar os campos físicos/comerciais do pedido — nunca os
+ * campos calculados pelo pipeline. Extraída como função pura para não
+ * depender de mocks de Express nos testes.
+ */
+export function construirPayloadAtualizacaoPedido(
+  isAdmin: boolean,
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { status: body.status };
+  if (body.descricao !== undefined) payload.descricao = body.descricao;
+
+  if (isAdmin) {
+    if (body.idMaterial !== undefined) payload.idMaterial = parseOptionalNumber(body.idMaterial);
+    if (body.idQualidade !== undefined) payload.idQualidade = parseOptionalNumber(body.idQualidade);
+    if (body.idArquivo !== undefined) payload.idArquivo = parseOptionalNumber(body.idArquivo);
+    if (body.parametros !== undefined) payload.parametros = body.parametros;
   }
 
-  return value === true || value === 1 || value === "1" || value === "true";
+  return payload;
 }
 
 export class PedidoController {
@@ -77,9 +98,14 @@ export class PedidoController {
    *       201:
    *         description: Pedido criado — análise em andamento (status=analisando)
    */
+  // Segurança (Fase 9/24): o cliente nunca pode informar preço, ETA, prazo,
+  // buffers, complexidade calculada ou prioridade_paga — esses campos são
+  // sempre derivados pelo backend (pipeline de slicing/ETA) ou setados por
+  // um caminho administrativo dedicado. `criar` e `atualizar` só aceitam os
+  // campos comerciais/físicos que o cliente legitimamente controla.
   criar = async (req: Request, res: Response) => {
     try {
-      const { nome, descricao, idMaterial, idQualidade, idArquivo, parametros, quantidade, prioridadePaga } = req.body;
+      const { nome, descricao, idMaterial, idQualidade, idArquivo, parametros, quantidade } = req.body;
       const idUsuario = req.jwtUser!.sub;
 
       if (!nome || !idMaterial || !idQualidade || !idArquivo) {
@@ -90,14 +116,15 @@ export class PedidoController {
 
       const pedido = await this.service.criar({
         nome,
-        descricao:      descricao   ?? null,
+        descricao:   descricao   ?? null,
         idUsuario,
-        idMaterial:     Number(idMaterial),
-        idQualidade:    Number(idQualidade),
-        idArquivo:      Number(idArquivo),
-        parametros:     parametros  ?? null,
-        quantidade:     quantidade != null ? Math.max(1, Number(quantidade)) : 1,
-        prioridadePaga: parseOptionalBoolean(prioridadePaga),
+        idMaterial:  Number(idMaterial),
+        idQualidade: Number(idQualidade),
+        idArquivo:   Number(idArquivo),
+        parametros:  parametros  ?? null,
+        quantidade:  quantidade != null ? Math.max(1, Number(quantidade)) : 1,
+        // prioridadePaga nunca vem do cliente — só um caminho administrativo
+        // dedicado (ver PATCH /pedidos/:id/prioridade) pode ativá-la.
       });
 
       return res.status(201).json(pedido);
@@ -113,20 +140,13 @@ export class PedidoController {
       const existing = await this.service.buscarPorId(id);
       if (!existing) return res.status(404).json({ message: "Pedido não encontrado." });
       const user = req.jwtUser!;
-      if (user.tipo !== "admin" && existing.idUsuario !== user.sub) {
+      const isAdmin = user.tipo === "admin";
+      if (!isAdmin && existing.idUsuario !== user.sub) {
         return res.status(403).json({ message: "Acesso negado." });
       }
-      const p = await this.service.atualizar(id, {
-        ...req.body,
-        preco:             parseOptionalNumber(req.body.preco),
-        idUsuario:         parseOptionalNumber(req.body.idUsuario),
-        idMaterial:        parseOptionalNumber(req.body.idMaterial),
-        idQualidade:       parseOptionalNumber(req.body.idQualidade),
-        idArquivo:         parseOptionalNumber(req.body.idArquivo),
-        tempoGcodeHoras:   parseOptionalNumber(req.body.tempoGcodeHoras),
-        prazoEntregaHoras: parseOptionalNumber(req.body.prazoEntregaHoras),
-        prioridadePaga:    parseOptionalBoolean(req.body.prioridadePaga),
-      });
+
+      const payload = construirPayloadAtualizacaoPedido(isAdmin, req.body ?? {});
+      const p = await this.service.atualizar(id, payload);
       return res.status(200).json(p);
     } catch (e: any) {
       return res.status(e.message === "Pedido não encontrado." ? 404 : 500)

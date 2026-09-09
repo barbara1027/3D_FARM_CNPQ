@@ -13,6 +13,14 @@ export interface GcodeMetrics {
   shortSegmentCount:  number;  // movimentos de extrusão < 1mm
   islandCount:        number;  // transições para ;TYPE:External perimeter (ilhas distintas)
   layerChanges:       number;  // total de mudanças de camada
+
+  // Dimensões físicas da peça impressa (bounding box dos movimentos com
+  // extrusão real — não da mesa nem dos deslocamentos de percurso), em mm.
+  // Usadas para checar compatibilidade com a mesa de cada impressora
+  // (ver Fase 20 / filaOtimizacao.service.ts).
+  dimensaoXMm: number;
+  dimensaoYMm: number;
+  dimensaoZMm: number;
 }
 
 /**
@@ -81,6 +89,12 @@ export async function parseGcode(
   let curX = 0, curY = 0, curZ = 0;
   let hasExtruded       = false;
   let travelSinceExtrude = 0;   // mm percorridos sem extrusão desde a última extrusão real
+
+  // Bounding box apenas dos pontos onde houve extrusão real (o objeto em
+  // si, não o percurso de viagem do bico nem a área da mesa).
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  let maxZ = 0;
 
   await new Promise<void>((resolve, reject) => {
     const rl = readline.createInterface({
@@ -177,6 +191,13 @@ export async function parseGcode(
       if (isRealExtrusion) {
         hasExtruded = true;
         travelSinceExtrude = 0;
+
+        // Bounding box do objeto: os dois extremos do segmento extrudado.
+        minX = Math.min(minX, curX, nx);
+        maxX = Math.max(maxX, curX, nx);
+        minY = Math.min(minY, curY, ny);
+        maxY = Math.max(maxY, curY, ny);
+        maxZ = Math.max(maxZ, nz);
       } else {
         travelSinceExtrude += dist;
       }
@@ -195,6 +216,10 @@ export async function parseGcode(
 
   if (!timeFound) throw new Error("Tempo estimado não encontrado no G-code.");
 
+  // Sem nenhuma extrusão real detectada, não há bounding box: cai para 0
+  // em vez de propagar Infinity/-Infinity.
+  const hasBoundingBox = Number.isFinite(minX) && Number.isFinite(maxX);
+
   return {
     timeSeconds,
     materialGrams:      Math.round(volumeCm3 * filamentDensity * 100) / 100,
@@ -204,5 +229,8 @@ export async function parseGcode(
     shortSegmentCount,
     islandCount,
     layerChanges,
+    dimensaoXMm: hasBoundingBox ? Math.round((maxX - minX) * 100) / 100 : 0,
+    dimensaoYMm: hasBoundingBox ? Math.round((maxY - minY) * 100) / 100 : 0,
+    dimensaoZMm: Math.round(maxZ * 100) / 100,
   };
 }

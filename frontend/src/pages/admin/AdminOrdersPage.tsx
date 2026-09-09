@@ -4,7 +4,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
   Tabs, Tab, Chip, List, ListItem, ListItemText, Divider,
   Select, MenuItem, FormControl, InputLabel, type SelectChangeEvent,
-  Tooltip, Badge,
+  Tooltip, Badge, TextField,
 } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -12,6 +12,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DownloadIcon from '@mui/icons-material/Download';
 import ReplayIcon from '@mui/icons-material/Replay';
 import ChatIcon from '@mui/icons-material/Chat';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import api from '../../services/api';
 import { type Pedido, type StatusPedido } from '../../types/Pedido';
 import { getStatusTranslation, getStatusColor } from '../../utils/translations';
@@ -24,7 +25,12 @@ const STATUS_TABS: { label: string; statuses: StatusPedido[] }[] = [
   { label: 'Concluídos',         statuses: ['concluido'] },
   { label: 'Falhas/Cancelados',  statuses: ['falhou', 'cancelado'] },
 ];
-const ALL_STATUSES: StatusPedido[] = ['na_fila', 'em_impressao', 'concluido', 'falhou', 'cancelado'];
+// O backend só aceita status operacional setado diretamente pelo admin para
+// 'cancelado' — todo o resto é resultado das transições da fila
+// (pedidos.service.ts: "O status operacional do pedido só pode ser alterado
+// pelas transições da fila."). Oferecer os outros valores aqui só gerava um
+// 500 disfarçado de "Erro ao atualizar status." sem nunca funcionar.
+const STATUSES_EDITAVEIS: StatusPedido[] = ['cancelado'];
 
 function TabPanel({ children, value, index }: { children?: React.ReactNode; value: number; index: number }) {
   return value === index ? <Box sx={{ pt: 2, height: 'calc(100% - 48px)' }}>{children}</Box> : null;
@@ -38,6 +44,7 @@ export function AdminOrdersPage() {
   const [selected, setSelected]       = useState<Pedido | null>(null);
   const [editOpen, setEditOpen]       = useState(false);
   const [newStatus, setNewStatus]     = useState<StatusPedido>('na_fila');
+  const [cancelReason, setCancelReason] = useState('');
   const [chatPedido, setChatPedido]   = useState<{ id: number; nome: string } | null>(null);
   const [unreadMap, setUnreadMap]     = useState<Record<number, number>>({});
 
@@ -85,8 +92,8 @@ export function AdminOrdersPage() {
       await api.post(`/pedidos/${pedido.id}/reimprimir`);
       setSelected(null);
       fetchPedidos();
-    } catch {
-      setError('Erro ao reimprimir.');
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Erro ao reimprimir.');
     }
   };
 
@@ -100,11 +107,16 @@ export function AdminOrdersPage() {
   const handleUpdateStatus = async () => {
     if (!selected) return;
     try {
-      await api.put(`/pedidos/${selected.id}`, { status: newStatus });
+      await api.put(`/pedidos/${selected.id}`, {
+        status: newStatus,
+        ...(newStatus === 'cancelado' ? { motivoCancelamento: cancelReason.trim() } : {}),
+      });
       setEditOpen(false);
       setSelected(null);
       fetchPedidos();
-    } catch { setError('Erro ao atualizar status.'); }
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Erro ao atualizar status.');
+    }
   };
 
   const cols: GridColDef<Pedido>[] = [
@@ -115,6 +127,23 @@ export function AdminOrdersPage() {
       }),
     },
     { field: 'nome',          headerName: 'Nome',     flex: 1, minWidth: 150 },
+    {
+      field: 'quantidade', headerName: 'Qtd.', width: 90, type: 'number',
+      renderCell: ({ value, row }) => {
+        const qtd = Number(value);
+        const emProgresso = qtd > 1 && row.status !== 'concluido';
+        return (
+          <Tooltip title={emProgresso ? `${row.unidadesConcluidas} de ${qtd} unidades impressas` : ''}>
+            <Chip
+              label={emProgresso ? `${row.unidadesConcluidas}/${qtd}` : `${qtd}x`}
+              size="small"
+              color={qtd > 1 ? 'primary' : 'default'}
+              variant={qtd > 1 ? 'filled' : 'outlined'}
+            />
+          </Tooltip>
+        );
+      },
+    },
     { field: 'nomeMaterial',  headerName: 'Material', width: 140, renderCell: ({ value }) => value ?? '—' },
     { field: 'emailUsuario',  headerName: 'Cliente',  width: 200, renderCell: ({ value }) => value ?? '—' },
     {
@@ -122,9 +151,16 @@ export function AdminOrdersPage() {
       renderCell: ({ value }) => (Number(value) > 0) ? `R$ ${Number(value).toFixed(2)}` : '—',
     },
     {
-      field: 'status', headerName: 'Status', width: 160,
-      renderCell: ({ value }) => (
-        <Chip label={getStatusTranslation(value as string)} color={getStatusColor(value as string)} size="small" />
+      field: 'status', headerName: 'Status', width: 190,
+      renderCell: ({ value, row }) => (
+        <Box display="flex" alignItems="center" gap={0.5}>
+          <Chip label={getStatusTranslation(value as string)} color={getStatusColor(value as string)} size="small" />
+          {value === 'falhou' && (
+            <Tooltip title={row.motivoFalha ?? 'Motivo não registrado.'}>
+              <WarningAmberIcon fontSize="small" color="error" />
+            </Tooltip>
+          )}
+        </Box>
       ),
     },
     {
@@ -132,9 +168,13 @@ export function AdminOrdersPage() {
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setSelected(row)}><VisibilityIcon /></IconButton>
-          <IconButton size="small" onClick={() => { setSelected(row); setNewStatus(row.status); setEditOpen(true); }}>
-            <EditIcon />
-          </IconButton>
+          {row.status !== 'concluido' && row.status !== 'cancelado' && (
+            <Tooltip title="Cancelar pedido">
+              <IconButton size="small" onClick={() => { setSelected(row); setNewStatus('cancelado'); setCancelReason(''); setEditOpen(true); }}>
+                <EditIcon />
+              </IconButton>
+            </Tooltip>
+          )}
           <Tooltip title="Chat com cliente">
             <IconButton size="small" onClick={() => setChatPedido({ id: row.id, nome: row.nome })}>
               <Badge badgeContent={unreadMap[row.id] || 0} color="error" variant="dot">
@@ -181,11 +221,35 @@ export function AdminOrdersPage() {
           <DialogContent dividers>
             <List dense>
               <ListItem><ListItemText primary="Cliente" secondary={`${selected.nomeUsuario ?? '—'} (${selected.emailUsuario ?? '—'})`} /></ListItem>
+              <ListItem>
+                <ListItemText
+                  primary="Quantidade"
+                  secondary={`${selected.quantidade} unidade${selected.quantidade > 1 ? 's' : ''}`}
+                />
+              </ListItem>
               <ListItem><ListItemText primary="Material" secondary={selected.nomeMaterial ?? '—'} /></ListItem>
               <ListItem><ListItemText primary="Arquivo"  secondary={selected.nomeArquivo  ?? '—'} /></ListItem>
               <Divider component="li" />
               <ListItem><ListItemText primary="Valor"    secondary={`R$ ${selected.preco.toFixed(2)}`} /></ListItem>
               <ListItem><ListItemText primary="Status"   secondary={getStatusTranslation(selected.status)} /></ListItem>
+              {selected.status === 'falhou' && (
+                <ListItem sx={{ bgcolor: 'error.50', borderRadius: 1 }}>
+                  <ListItemText
+                    primary="Motivo da falha"
+                    secondary={selected.motivoFalha ?? 'Motivo não registrado.'}
+                    primaryTypographyProps={{ color: 'error.dark', fontWeight: 600 }}
+                  />
+                </ListItem>
+              )}
+              {selected.status === 'cancelado' && (
+                <ListItem sx={{ bgcolor: 'warning.50', borderRadius: 1 }}>
+                  <ListItemText
+                    primary="Motivo do cancelamento"
+                    secondary={selected.motivoCancelamento ?? 'Motivo não registrado.'}
+                    primaryTypographyProps={{ color: 'warning.dark', fontWeight: 600 }}
+                  />
+                </ListItem>
+              )}
               {selected.descricao && <ListItem><ListItemText primary="Descrição" secondary={selected.descricao} /></ListItem>}
               <ListItem><ListItemText primary="Criado em" secondary={new Date(selected.createdAt).toLocaleString('pt-BR')} /></ListItem>
             </List>
@@ -199,7 +263,10 @@ export function AdminOrdersPage() {
                 Baixar STL
               </Button>
             </Tooltip>
-            {(selected.status === 'falhou' || selected.status === 'concluido' || selected.status === 'em_impressao') && (
+            {/* Backend só aceita reimprimir a partir de 'concluido'/'falhou'
+                (pedidos.routes.ts: WHERE status IN ('concluido', 'falhou')) —
+                'em_impressao' sempre voltava 409. */}
+            {(selected.status === 'falhou' || selected.status === 'concluido') && (
               <Tooltip title="Reenviar para a fila de impressão">
                 <Button
                   startIcon={<ReplayIcon />}
@@ -218,7 +285,11 @@ export function AdminOrdersPage() {
                 Chat
               </Button>
             </Badge>
-            <Button onClick={() => { setNewStatus(selected.status); setEditOpen(true); }}>Editar Status</Button>
+            {selected.status !== 'concluido' && selected.status !== 'cancelado' && (
+              <Button color="error" onClick={() => { setNewStatus('cancelado'); setCancelReason(''); setEditOpen(true); }}>
+                Cancelar pedido
+              </Button>
+            )}
             <Button onClick={() => setSelected(null)}>Fechar</Button>
           </DialogActions>
         </Dialog>
@@ -232,24 +303,44 @@ export function AdminOrdersPage() {
         onClose={() => { setChatPedido(null); fetchUnreadResumo(); }}
       />
 
-      {/* Editar status */}
+      {/* Cancelar pedido — único status operacional que o admin pode setar
+          diretamente; qualquer outra transição é feita pela fila. */}
       {editOpen && selected && (
         <Dialog open onClose={() => setEditOpen(false)} maxWidth="xs" fullWidth>
-          <DialogTitle>Atualizar status — {selected.nome}</DialogTitle>
-          <DialogContent sx={{ pt: 2 }}>
+          <DialogTitle>Cancelar pedido — {selected.nome}</DialogTitle>
+          <DialogContent sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Typography color="text.secondary">
+              O status operacional deste pedido só muda automaticamente pelas
+              transições da fila de impressão. A única ação manual disponível
+              aqui é o cancelamento.
+            </Typography>
             <FormControl fullWidth>
               <InputLabel>Novo status</InputLabel>
               <Select label="Novo status" value={newStatus}
                 onChange={(e: SelectChangeEvent) => setNewStatus(e.target.value as StatusPedido)}>
-                {ALL_STATUSES.map(s => (
+                {STATUSES_EDITAVEIS.map(s => (
                   <MenuItem key={s} value={s}>{getStatusTranslation(s)}</MenuItem>
                 ))}
               </Select>
             </FormControl>
+            {newStatus === 'cancelado' && (
+              <TextField
+                label="Motivo do cancelamento"
+                helperText="O cliente vai receber esse motivo por e-mail."
+                fullWidth multiline minRows={2}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setEditOpen(false)}>Cancelar</Button>
-            <Button variant="contained" onClick={handleUpdateStatus}>Salvar</Button>
+            <Button onClick={() => setEditOpen(false)}>Voltar</Button>
+            <Button
+              variant="contained" color="error" onClick={handleUpdateStatus}
+              disabled={!cancelReason.trim()}
+            >
+              Confirmar cancelamento
+            </Button>
           </DialogActions>
         </Dialog>
       )}
